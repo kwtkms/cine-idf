@@ -1,0 +1,20 @@
+{
+  "name": "cine-idf",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Toutes les seances de cinema d'Ile-de-France, en local.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "mobile": "node -e \"process.env.HOST='0.0.0.0';import('./src/server.js')\"",
+    "refresh": "node src/scrape.js",
+    "calibrate": "node src/calibrate.js",
+    "geocode": "node src/geocode.js",
+    "ugc": "node src/ugc.js",
+    "notes": "node src/letterboxd.js",
+    "verify": "node src/verify.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

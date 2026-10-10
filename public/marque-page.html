@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ciné IDF — marque-page Letterboxd</title>
+<link rel="icon" type="image/png" sizes="256x256" href="/icon.png" />
+<link rel="stylesheet" href="/style.css" />
+<style>
+  .guide { max-width: 700px; margin: 44px auto; padding: 0 20px; }
+  .guide h1 { font-size: 24px; margin-bottom: 6px; }
+  .guide ol { line-height: 2; padding-left: 22px; margin: 0; }
+  .bloc { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px 26px; margin: 22px 0; }
+  .drag { display: inline-block; margin: 18px 0 6px; padding: 14px 24px;
+    background: var(--accent); color: #17181a; border-radius: 10px;
+    font-weight: 700; font-size: 16px; text-decoration: none; cursor: grab; }
+  .guide code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .guide kbd { background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 6px; font-size: 12px; font-family: inherit; }
+  textarea { width: 100%; height: 70px; background: var(--panel-2); color: var(--muted);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 11px; }
+  .apres { border-left: 3px solid var(--accent-2); padding-left: 14px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<div class="guide">
+  <h1>🎬 Marque-page Letterboxd</h1>
+  <p class="muted">À installer une fois. Aucune extension.</p>
+
+  <div class="bloc">
+    <ol>
+      <li>Affiche ta barre de favoris : <kbd>Ctrl</kbd> + <kbd>Maj</kbd> + <kbd>B</kbd></li>
+      <li><strong>Glisse le bouton ci-dessous</strong> dans cette barre</li>
+    </ol>
+    <a class="drag" href="javascript:(async%20()%20%3D%3E%20%7B%20const%20APP%20%3D%20'http%3A%2F%2Flocalhost%3A4173'%3B%20const%20bulle%20%3D%20document.createElement('div')%3B%20bulle.style.cssText%20%3D%20'position%3Afixed%3Bz-index%3A99999%3Bright%3A16px%3Bbottom%3A16px%3Bbackground%3A%23161b23%3Bcolor%3A%23fff%3B'%20%2B%20'padding%3A12px%2016px%3Bborder-radius%3A10px%3Bfont%3A14px%20system-ui%3Bbox-shadow%3A0%206px%2024px%20rgba(0%2C0%2C0%2C.4)'%3B%20document.body.appendChild(bulle)%3B%20const%20dire%20%3D%20(t)%20%3D%3E%20%7B%20bulle.textContent%20%3D%20t%3B%20%7D%3B%20if%20(!%2F%5C%2Fwatchlist%5C%2F%3F%24%2F.test(location.pathname))%20%7B%20dire('Ouvre%20ta%20page%20watchlist%20puis%20reclique.')%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%205000)%3B%20return%3B%20%7D%20const%20compter%20%3D%20()%20%3D%3E%20document.querySelectorAll('li.griditem').length%3B%20let%20precedent%20%3D%20-1%3B%20for%20(let%20i%20%3D%200%3B%20i%20%3C%2060%20%26%26%20compter()%20!%3D%3D%20precedent%3B%20i%2B%2B)%20%7B%20precedent%20%3D%20compter()%3B%20dire(%60Chargement%E2%80%A6%20%24%7Bprecedent%7D%20films%60)%3B%20window.scrollTo(0%2C%20document.body.scrollHeight)%3B%20await%20new%20Promise((r)%20%3D%3E%20setTimeout(r%2C%201000))%3B%20%7D%20const%20films%20%3D%20%5B...document.querySelectorAll('li.griditem')%5D.map((li)%20%3D%3E%20%7B%20const%20alt%20%3D%20li.querySelector('img%5Balt%5D')%3F.getAttribute('alt')%20%7C%7C%20''%3B%20const%20m%20%3D%20alt.match(%2F%5EPoster%20for%20(.%2B)%20%5C((%5Cd%7B4%7D)%5C)%24%2F)%3B%20return%20%7B%20titre%3A%20m%20%3F%20m%5B1%5D%20%3A%20alt.replace(%2F%5EPoster%20for%20%2F%2C%20'').trim()%2C%20annee%3A%20m%20%3F%20Number(m%5B2%5D)%20%3A%20null%20%7D%3B%20%7D).filter((f)%20%3D%3E%20f.titre)%3B%20const%20pseudo%20%3D%20location.pathname.split(%22%2F%22).filter(Boolean)%5B0%5D%20%7C%7C%20null%3B%20if%20(!films.length)%20%7B%20dire('Aucun%20film%20trouv%C3%A9%20sur%20cette%20page.')%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%206000)%3B%20return%3B%20%7D%20dire(%60Envoi%20de%20%24%7Bfilms.length%7D%20films%E2%80%A6%60)%3B%20try%20%7B%20const%20r%20%3D%20await%20Promise.race(%5B%20fetch(%60%24%7BAPP%7D%2Fapi%2Fwatchlist%2Fpush%60%2C%20%7B%20method%3A%20'POST'%2C%20headers%3A%20%7B%20'Content-Type'%3A%20'application%2Fjson'%20%7D%2C%20body%3A%20JSON.stringify(%7B%20films%2C%20pseudo%20%7D)%2C%20%7D)%2C%20new%20Promise((_%2C%20rej)%20%3D%3E%20setTimeout(()%20%3D%3E%20rej(new%20Error('d%C3%A9lai%20d%C3%A9pass%C3%A9'))%2C%204000))%2C%20%5D)%3B%20if%20(r.ok)%20%7B%20const%20d%20%3D%20await%20r.json()%3B%20dire(%60%E2%9C%93%20%24%7Bd.recus%7D%20films%20envoy%C3%A9s%20%C3%A0%20Cin%C3%A9%20IDF%60)%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%206000)%3B%20return%3B%20%7D%20%7D%20catch%20%7B%20%20%7D%20dire('Ouverture%20de%20Cin%C3%A9%20IDF%E2%80%A6')%3B%20window.open(%60%24%7BAPP%7D%2F%23wl%3D%24%7BencodeURIComponent(JSON.stringify(%7B%20films%2C%20pseudo%20%7D))%7D%60%2C%20'_blank')%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%204000)%3B%20%7D)()%3B" onclick="return false">🎬 Envoyer vers Ciné IDF</a>
+    <p class="muted small">Le cliquer ici ne fait rien : il doit être glissé dans la barre,
+      puis cliqué depuis Letterboxd.</p>
+  </div>
+
+  <div class="bloc">
+    <strong>Ensuite, à chaque fois que tu veux mettre à jour</strong>
+    <div class="apres">
+      <p>Ouvre <code>letterboxd.com/…/watchlist/</code> sur ton ordinateur, puis clique le favori.</p>
+      <p class="muted small">Il charge toute la liste, l'envoie à Ciné IDF, et confirme en bas
+        à droite. Ça récupère aussi tout ce que tu as ajouté depuis ton téléphone.</p>
+      <p class="muted small">Si un bouton orange apparaît au lieu de la confirmation verte,
+        clique-le : c'est le chemin de secours, il fait la même chose.</p>
+    </div>
+  </div>
+
+  <p class="muted small"><strong>Ciné IDF doit être ouvert</strong> quand tu cliques le favori,
+    sinon il n'y a personne pour recevoir la liste.</p>
+
+  <details>
+    <summary class="muted small" style="cursor:pointer">Le glisser-déposer ne marche pas ?</summary>
+    <p class="muted small">Clic droit sur la barre de favoris → <em>Ajouter une page</em>,
+      puis colle ceci comme adresse :</p>
+    <textarea readonly onclick="this.select()">javascript:(async%20()%20%3D%3E%20%7B%20const%20APP%20%3D%20'http%3A%2F%2Flocalhost%3A4173'%3B%20const%20bulle%20%3D%20document.createElement('div')%3B%20bulle.style.cssText%20%3D%20'position%3Afixed%3Bz-index%3A99999%3Bright%3A16px%3Bbottom%3A16px%3Bbackground%3A%23161b23%3Bcolor%3A%23fff%3B'%20%2B%20'padding%3A12px%2016px%3Bborder-radius%3A10px%3Bfont%3A14px%20system-ui%3Bbox-shadow%3A0%206px%2024px%20rgba(0%2C0%2C0%2C.4)'%3B%20document.body.appendChild(bulle)%3B%20const%20dire%20%3D%20(t)%20%3D%3E%20%7B%20bulle.textContent%20%3D%20t%3B%20%7D%3B%20if%20(!%2F%5C%2Fwatchlist%5C%2F%3F%24%2F.test(location.pathname))%20%7B%20dire('Ouvre%20ta%20page%20watchlist%20puis%20reclique.')%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%205000)%3B%20return%3B%20%7D%20const%20compter%20%3D%20()%20%3D%3E%20document.querySelectorAll('li.griditem').length%3B%20let%20precedent%20%3D%20-1%3B%20for%20(let%20i%20%3D%200%3B%20i%20%3C%2060%20%26%26%20compter()%20!%3D%3D%20precedent%3B%20i%2B%2B)%20%7B%20precedent%20%3D%20compter()%3B%20dire(%60Chargement%E2%80%A6%20%24%7Bprecedent%7D%20films%60)%3B%20window.scrollTo(0%2C%20document.body.scrollHeight)%3B%20await%20new%20Promise((r)%20%3D%3E%20setTimeout(r%2C%201000))%3B%20%7D%20const%20films%20%3D%20%5B...document.querySelectorAll('li.griditem')%5D.map((li)%20%3D%3E%20%7B%20const%20alt%20%3D%20li.querySelector('img%5Balt%5D')%3F.getAttribute('alt')%20%7C%7C%20''%3B%20const%20m%20%3D%20alt.match(%2F%5EPoster%20for%20(.%2B)%20%5C((%5Cd%7B4%7D)%5C)%24%2F)%3B%20return%20%7B%20titre%3A%20m%20%3F%20m%5B1%5D%20%3A%20alt.replace(%2F%5EPoster%20for%20%2F%2C%20'').trim()%2C%20annee%3A%20m%20%3F%20Number(m%5B2%5D)%20%3A%20null%20%7D%3B%20%7D).filter((f)%20%3D%3E%20f.titre)%3B%20const%20pseudo%20%3D%20location.pathname.split(%22%2F%22).filter(Boolean)%5B0%5D%20%7C%7C%20null%3B%20if%20(!films.length)%20%7B%20dire('Aucun%20film%20trouv%C3%A9%20sur%20cette%20page.')%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%206000)%3B%20return%3B%20%7D%20dire(%60Envoi%20de%20%24%7Bfilms.length%7D%20films%E2%80%A6%60)%3B%20try%20%7B%20const%20r%20%3D%20await%20Promise.race(%5B%20fetch(%60%24%7BAPP%7D%2Fapi%2Fwatchlist%2Fpush%60%2C%20%7B%20method%3A%20'POST'%2C%20headers%3A%20%7B%20'Content-Type'%3A%20'application%2Fjson'%20%7D%2C%20body%3A%20JSON.stringify(%7B%20films%2C%20pseudo%20%7D)%2C%20%7D)%2C%20new%20Promise((_%2C%20rej)%20%3D%3E%20setTimeout(()%20%3D%3E%20rej(new%20Error('d%C3%A9lai%20d%C3%A9pass%C3%A9'))%2C%204000))%2C%20%5D)%3B%20if%20(r.ok)%20%7B%20const%20d%20%3D%20await%20r.json()%3B%20dire(%60%E2%9C%93%20%24%7Bd.recus%7D%20films%20envoy%C3%A9s%20%C3%A0%20Cin%C3%A9%20IDF%60)%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%206000)%3B%20return%3B%20%7D%20%7D%20catch%20%7B%20%20%7D%20dire('Ouverture%20de%20Cin%C3%A9%20IDF%E2%80%A6')%3B%20window.open(%60%24%7BAPP%7D%2F%23wl%3D%24%7BencodeURIComponent(JSON.stringify(%7B%20films%2C%20pseudo%20%7D))%7D%60%2C%20'_blank')%3B%20setTimeout(()%20%3D%3E%20bulle.remove()%2C%204000)%3B%20%7D)()%3B</textarea>
+  </details>
+
+  <p style="margin-top:30px"><a href="/">← Retour à Ciné IDF</a></p>
+</div>
+</body>
+</html>
