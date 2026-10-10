@@ -1,0 +1,14 @@
+{
+  "name": "Ciné IDF",
+  "short_name": "Ciné IDF",
+  "description": "Toutes les séances de cinéma d'Île-de-France.",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0e1116",
+  "theme_color": "#161b23",
+  "icons": [
+    { "src": "/icon.png", "sizes": "256x256", "type": "image/png", "purpose": "any" }
+  ]
+}
