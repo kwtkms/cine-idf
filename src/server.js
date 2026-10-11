@@ -156,14 +156,15 @@ function externalRefreshRunning() {
   }
 }
 
-function startRefresh(days) {
+function startRefresh(days, { refetch = false } = {}) {
   if (refresh.running || externalRefreshRunning()) return false;
   refresh.running = true;
   refresh.startedAt = new Date().toISOString();
   refresh.log = [];
   refresh.code = null;
 
-  const child = spawn(process.execPath, [path.join(ROOT, 'src', 'scrape.js'), `--days=${days}`], {
+  const args = [path.join(ROOT, 'src', 'scrape.js'), `--days=${days}`, ...(refetch ? ['--refetch'] : [])];
+  const child = spawn(process.execPath, args, {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true, // aucune fenetre de console ne doit apparaitre
@@ -517,7 +518,9 @@ const server = http.createServer(async (req, res) => {
     refresh.error = null;
     refresh.summary = null;
     refresh.progress = null;
-    const started = startRefresh(days);
+    // Demande explicite (bouton) : tout est relu, y compris les jours encore
+    // frais. Les relances automatiques, elles, ne relisent que le perime.
+    const started = startRefresh(days, { refetch: true });
     return send(req, res, started ? 202 : 409, JSON.stringify({ started, ...refresh }));
   }
 

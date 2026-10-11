@@ -21,7 +21,9 @@ d'état affiche la progression et les séances se complètent au fil de l'eau, *
 rechargement de page ni perte de tes filtres**. Aucune tâche planifiée, rien qui tourne
 quand l'app est fermée.
 
-Le bouton **Mettre à jour** en haut à droite force une récupération à la demande.
+Le bouton **Mettre à jour** en haut à droite relit **tous** les jours, même ceux encore
+frais (environ 15 min pour 5 jours), sans rien vider pendant l'opération. Les relances
+automatiques, elles, ne relisent que ce qui est périmé.
 
 ### La barre d'état
 
@@ -148,12 +150,17 @@ mémorisé dans `data/scope.json`.
 Les fiches films affichent la note **Letterboxd** quand elle est connue (en bleu,
 suffixe `LB`), et retombent sur celle d'**AlloCiné** sinon (en jaune, suffixe `AC`).
 Les deux sont sur 5, donc directement comparables. L'infobulle donne la source et le
-nombre de votes. Le tri « Mieux notés » utilise la note affichée.
+nombre de votes, et **un clic sur la note LB ouvre la fiche Letterboxd** du film. Le tri
+« Mieux notés » utilise la note affichée.
 
 Letterboxd n'a pas d'API ouverte et sa recherche est rendue côté client — vérifié,
 zéro résultat exploitable dans le HTML. En revanche la **fiche d'un film** est rendue
-côté serveur et contient la note dans un bloc JSON-LD. `src/letterboxd.js` reconstruit
-donc l'adresse à partir du titre :
+côté serveur et contient la note dans un bloc JSON-LD. Pour trouver l'adresse de la
+fiche, `src/letterboxd.js` interroge d'abord **Wikidata**, qui relie l'identifiant
+AlloCiné (P1265) à celui de Letterboxd (P6127) — une seule requête pour tous les films,
+sans clé. C'est ce qui règle les classiques au titre français (*À bout de souffle* →
+`breathless`, *12 hommes en colère* → `12-angry-men`). À défaut, l'adresse est
+reconstruite à partir du titre (apostrophes supprimées, comme le fait Letterboxd) :
 
 1. `titre-original-année` — l'année d'abord, car Letterboxd s'en sert pour départager
    les homonymes : sans elle on tombe sur le *Michael* de 2011 au lieu de celui de 2026 ;
@@ -162,10 +169,9 @@ donc l'adresse à partir du titre :
 
 Chaque candidat est validé sur l'année trouvée dans la page avant d'être accepté.
 
-**Taux de correspondance mesuré : 201 films sur 322, soit 62 %.** Les échecs sont ceux dont le
-titre Letterboxd ne ressemble ni au titre français ni au titre original (*Salò o le
-120 giornate di Sodoma* → `salo-or-the-120-days-of-sodom`). Sans identifiant commun
-entre les deux sites, c'est le plafond de la méthode ; le repli AlloCiné couvre le reste.
+**Taux de correspondance mesuré le 11/10/2026 : 327 films sur 389, soit 84 %** (61 % avant
+Wikidata). Les films restants sont surtout des courts-métrages, programmes jeunesse et
+documentaires absents de Wikidata ou de Letterboxd ; le repli AlloCiné couvre le reste.
 
 Les notes sont **mises en cache définitivement** dans `data/letterboxd.json` : un film
 déjà résolu n'est jamais redemandé, et les films introuvables ne sont retentés qu'au
@@ -309,10 +315,21 @@ Le reste est géré tout seul :
 - **salles muettes** : une salle interrogée chaque jour mais sans aucun horaire publié
   en ligne (ex. Cinéma 4 Delta en septembre 2026) est listée sous la case UGC Illimité,
   avec l'invitation à l'appeler ;
+- **salle perdue par AlloCiné** : AlloCiné retire parfois un cinéma entier de sa liste
+  alors que sa billetterie vend toujours les séances (UGC Cyrano le 11/10/2026 : « aucune
+  séance » chez AlloCiné, séance de 15h30 confirmée sur ugc.fr). Quand une salle qui avait
+  au moins 5 séances à venir tombe d'un coup à zéro, l'app les garde, en pâle avec un
+  « ? » et une infobulle qui invite à vérifier sur la billetterie, au lieu de les effacer.
+  Même chose pour **un film entier** qui disparaît d'une salle aujourd'hui ou demain
+  (La Défense, 11/10/2026 : *Heart of the Beast* absent d'AlloCiné de 14h15 à 15h40).
+  Le retrait de séances isolées (complet, annulation) est, lui, appliqué normalement ;
+- écritures sûres : journées et notes sont écrites dans un fichier temporaire puis
+  renommées, et un cache de notes illisible n'est plus jamais écrasé ;
 - après chaque mise à jour, **toutes** les journées déjà ouvertes sont rechargées (avant,
-  seule la journée affichée l'était et les autres pouvaient rester à l'ancienne version).
+  seule la journée affichée l'était et les autres pouvaient rester à l'ancienne version),
+  ainsi que les notes Letterboxd — une fenêtre laissée ouverte n'en voyait plus de nouvelles.
 
-**Vérification** : `npm run verify` retélécharge chaque salle en direct et liste les
+**Vérification** : double-clic sur `Controle des seances Cine IDF.cmd` dans le dossier (ou `node src/verify.js` — `npm run verify` est souvent bloqué par PowerShell, « exécution de scripts désactivée »). Elle retélécharge chaque salle en direct et liste les
 écarts. Le 14/09/2026, après corrections : 0 séance manquante et 0 en trop sur aujourd'hui
 et demain ; les seuls écarts des jours suivants étaient des programmes publiés pendant
 la vérification elle-même.

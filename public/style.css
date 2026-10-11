@@ -170,6 +170,8 @@ input[type=search], input[type=time], select {
 .card-meta .dot { opacity: .5; margin: 0 6px; }
 .rating { font-weight: 600; white-space: nowrap; }
 .rating.lb { color: #40bcf4; }             /* bleu Letterboxd */
+a.rating { text-decoration: none; }
+a.rating:hover { text-decoration: underline; }
 .rating.ac { color: var(--accent); }        /* repli AlloCiné */
 .rating i {
   font-style: normal; font-size: 9px; font-weight: 700;
@@ -209,6 +211,7 @@ input[type=search], input[type=time], select {
 .time em { font-style: normal; font-size: 10px; color: var(--muted); text-transform: uppercase; }
 .time.past { opacity: .38; }
 .time.preview { border-style: dashed; border-color: var(--accent); }
+.time.unconfirmed { opacity: .55; border-style: dotted; } /* plus listée par AlloCiné, gardée par prudence */
 /* Séance qui commence dans moins de 2 h */
 .time.soon { border-color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent-2); }
 .time .in {

@@ -34,6 +34,9 @@ const arg = (name, def) => {
 };
 const DAYS = Math.max(1, Math.min(21, Number(arg('days', 5))));
 const FORCE = argv.includes('--force');
+// Bouton « Mettre a jour » : relit chaque jour, meme encore frais, mais sur
+// place (rien n'est vide), contrairement a --force qui repart de zero.
+const REFETCH = argv.includes('--refetch');
 const THEATERS_ONLY = argv.includes('--theaters-only');
 
 /**
@@ -45,7 +48,8 @@ function ugcOnly() {
   if (argv.includes('--all')) return false;
   if (argv.includes('--ugc-only')) return true;
   try {
-    return JSON.parse(fs.readFileSync(path.join(DATA, 'scope.json'), 'utf8')).ugcOnly !== false;
+    const raw = fs.readFileSync(path.join(DATA, 'scope.json'), 'utf8');
+    return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw).ugcOnly !== false;
   } catch {
     return true;
   }
@@ -110,6 +114,24 @@ function loadClosed() {
  * silencieusement reconstruite de zero.
  */
 const readJson = async (file) => JSON.parse(stripBom(await fsp.readFile(file, 'utf8')));
+const readJsonSync = (file) => JSON.parse(stripBom(fs.readFileSync(file, 'utf8')));
+
+/**
+ * Fichier temporaire puis renommage : une coupure (PC eteint, processus tue)
+ * ne laisse jamais une journee a moitie ecrite, que la recuperation suivante
+ * jugerait illisible et referait de zero.
+ */
+async function writeAtomic(file, text) {
+  const tmp = `${file}.tmp`;
+  await fsp.writeFile(tmp, text);
+  try {
+    await fsp.rename(tmp, file);
+  } catch {
+    // Windows refuse le renommage si le serveur lit le fichier a cet instant.
+    await fsp.writeFile(file, text);
+    await fsp.rm(tmp, { force: true });
+  }
+}
 
 function isKnownClosed(closed, id, date) {
   const e = closed[id];
@@ -290,7 +312,7 @@ async function scrapeDay(theaters, date, closed, offset, totalDays, reference = 
       const prev = await readJson(file);
       const ageH = prev.fetchedAt ? (Date.now() - Date.parse(prev.fetchedAt)) / 3600000 : Infinity;
       const sparse = (prev.counts?.shows ?? 0) < SPARSE_RATIO * reference;
-      if (prev.complete && ageH < freshHours(offset, sparse)) {
+      if (prev.complete && !REFETCH && ageH < freshHours(offset, sparse)) {
         log(`${date} : deja a jour (${prev.counts?.shows ?? 0} seances, il y a ${ageH.toFixed(1)} h)`);
         progress(theaters.length, prev.counts?.shows ?? 0);
         return prev.counts;
@@ -344,12 +366,18 @@ async function scrapeDay(theaters, date, closed, offset, totalDays, reference = 
     // Sur place, la journee reste un instantane complet pendant toute l'operation.
     day.complete = inPlace || scanned.size >= theaters.length;
     finalize(day, byTheater, theaters.length);
-    await fsp.writeFile(file, JSON.stringify(day));
+    await writeAtomic(file, JSON.stringify(day));
     await fsp.writeFile(CLOSED_FILE(), JSON.stringify(closed, null, 1));
     sinceFlush = 0;
   };
 
   try {
+    // Aujourd'hui, AlloCine ne renvoie plus les seances deja passees : on ne
+    // compare donc qu'avec celles encore a venir (15 min de marge).
+    const toMin = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+    const now = new Date();
+    const seuil = date === localDate(0) ? now.getHours() * 60 + now.getMinutes() - 15 : -1;
+
     await pool(todo, CONCURRENCY, async (t) => {
       let { results, nextDate } = await fetchShowtimes(t.id, date);
       // AlloCine renvoie parfois une reponse tronquee (vu le 14/09 : 60 seances
@@ -357,12 +385,38 @@ async function scrapeDay(theaters, date, closed, offset, totalDays, reference = 
       // Si le volume s'effondre par rapport a l'instantane precedent, on relit
       // une fois et on garde la plus fournie ; deux lectures faibles de suite
       // valent un vrai changement de programme.
-      const avant = byTheater.get(t.id)?.length ?? 0;
+      const aVenir = (byTheater.get(t.id) || []).filter((s) => toMin(s.s) >= seuil);
+      const avant = aVenir.length;
       if (avant >= 10 && countShows(results) < avant / 2) {
         const again = await fetchShowtimes(t.id, date);
         if (countShows(again.results) > countShows(results)) ({ results, nextDate } = again);
       }
-      mergeTheater(day, byTheater, t.id, results);
+      // Disparition totale d'une salle qui avait un programme : AlloCine perd
+      // parfois un cinema entier alors que sa billetterie vend toujours les
+      // seances (UGC Cyrano, 11/10/2026 : 0 chez AlloCine, seance confirmee sur
+      // ugc.fr). On garde les seances connues, marquees « non confirmees »
+      // (x: 1) : l'app les affiche avec un avertissement au lieu de les effacer.
+      if (!countShows(results) && avant >= 5) {
+        byTheater.set(t.id, aVenir.map((s) => ({ ...s, x: 1 })));
+        log(`  ? ${date} ${t.name} : plus rien chez AlloCine, ${avant} seances gardees comme non confirmees`);
+      } else {
+        mergeTheater(day, byTheater, t.id, results);
+        // Meme chose a l'echelle d'un film : AlloCine fait parfois disparaitre
+        // un film entier d'une salle puis le remet (La Defense, 11/10/2026 :
+        // Heart of the Beast absent de 14h15 a 15h40). Pour aujourd'hui et
+        // demain, un film qui avait encore des seances a venir et disparait
+        // d'un coup est garde « non confirme » plutot qu'efface. Un retrait de
+        // seances isolees (complet, annulation) reste applique tel quel.
+        if (offset <= 1) {
+          const presents = new Set(results.map((e) => e.movie?.internalId));
+          const disparus = aVenir.filter((s) => !presents.has(s.m));
+          if (disparus.length) {
+            byTheater.get(t.id).push(...disparus.map((s) => ({ ...s, x: 1 })));
+            const films = new Set(disparus.map((s) => s.m)).size;
+            log(`  ? ${date} ${t.name} : ${films} film(s) plus listes par AlloCine, ${disparus.length} seances gardees comme non confirmees`);
+          }
+        }
+      }
       if (nextDate && nextDate > date) closed[t.id] = { from: date, until: nextDate, seenAt: new Date().toISOString() };
       else if (results.length) delete closed[t.id];
       scanned.add(t.id);
@@ -397,7 +451,7 @@ function byUsefulness(theaters) {
   // soient a jour au bout de quelques secondes plutot que d'un quart d'heure.
   let favs = new Set();
   try {
-    favs = new Set(JSON.parse(fs.readFileSync(path.join(DATA, 'favorites.json'), 'utf8')));
+    favs = new Set(readJsonSync(path.join(DATA, 'favorites.json')));
   } catch { /* aucun favori enregistre */ }
   if (favs.size) log(`${favs.size} cinemas favoris passeront en premier`);
 
@@ -405,7 +459,7 @@ function byUsefulness(theaters) {
   try {
     for (const f of fs.readdirSync(DATA)) {
       if (!/^day-\d{4}-\d{2}-\d{2}\.json$/.test(f)) continue;
-      const day = JSON.parse(fs.readFileSync(path.join(DATA, f), 'utf8'));
+      const day = readJsonSync(path.join(DATA, f));
       for (const s of day.shows || []) score.set(s.t, (score.get(s.t) || 0) + 1);
       for (const id of day.scanned || []) if (!score.has(id)) score.set(id, 0);
     }
@@ -526,10 +580,12 @@ async function main() {
     }
   }
 
-  // Menage des journees passees.
+  // Menage des journees PASSEES uniquement. Avant, tout jour hors de la
+  // fenetre demandee etait supprime : une mise a jour sur 2 jours effacait
+  // les 3 suivants (vu le 11/10/2026). Les .tmp orphelins partent aussi.
   for (const f of await fsp.readdir(DATA)) {
-    const m = /^day-(\d{4}-\d{2}-\d{2})\.json$/.exec(f);
-    if (m && !dates.includes(m[1])) await fsp.rm(path.join(DATA, f));
+    const m = /^day-(\d{4}-\d{2}-\d{2})\.json(\.tmp)?$/.exec(f);
+    if (m && (m[1] < dates[0] || m[2])) await fsp.rm(path.join(DATA, f), { force: true });
   }
 
   // L'index est reconstruit depuis les fichiers presents : une journee seulement

@@ -72,6 +72,7 @@ const jobs = dates.flatMap((d) => theaters.map((t) => [d, t]));
 let next = 0;
 let done = 0;
 let failed = 0;
+let unconfirmed = 0;
 
 async function worker() {
   while (next < jobs.length) {
@@ -88,13 +89,21 @@ async function worker() {
     }
     // Relu a chaque fois : une mise a jour a pu passer entre-temps.
     const day = readJson(path.join(DATA, `day-${date}.json`));
-    const mine = new Map(day.shows.filter((s) => s.t === t.id).map((s) => [`${s.m}|${s.s}`, day.movies[s.m]?.title || s.m]));
+    const shows = day.shows.filter((s) => s.t === t.id);
+    const mine = new Map(shows.map((s) => [`${s.m}|${s.s}`, day.movies[s.m]?.title || s.m]));
+    const flagged = new Set(shows.filter((s) => s.x).map((s) => `${s.m}|${s.s}`));
     tot.direct += got.size;
     tot.app += mine.size;
-    for (const [k, title] of got) if (!mine.has(k)) missing.push(`${date} ${t.name} — ${title} a ${k.split('|')[1]}`);
+    for (const [k, title] of got) {
+      if (mine.has(k)) continue;
+      if (date === today && k.split('|')[1] < at) continue; // deja passee : sans interet
+      missing.push(`${date} ${t.name} — ${title} a ${k.split('|')[1]}`);
+    }
     for (const [k, title] of mine) {
       if (got.has(k)) continue;
       if (date === today && k.split('|')[1] < at) continue; // seance deja commencee
+      // Deja affichee comme « non confirmee » : pas une erreur de l'app.
+      if (flagged.has(k)) { unconfirmed++; continue; }
       extra.push(`${date} ${t.name} — ${title} a ${k.split('|')[1]}`);
     }
     if (++done % 50 === 0) console.log(`  ${done}/${jobs.length}`);
@@ -108,6 +117,7 @@ console.log(`\nManquantes dans l'app : ${missing.length}`);
 for (const m of missing.slice(0, 40)) console.log(`  - ${m}`);
 console.log(`Affichees mais plus chez AlloCine : ${extra.length}`);
 for (const m of extra.slice(0, 40)) console.log(`  + ${m}`);
+if (unconfirmed) console.log(`Affichees comme non confirmees (« ? » dans l'app, salle perdue par AlloCine) : ${unconfirmed}`);
 if (failed) console.log(`Salles non verifiees (erreur reseau) : ${failed}`);
 console.log(missing.length || extra.length
   ? "\nEcarts trouves : si ce sont des programmes publies depuis la derniere mise a jour, cliquer « Mettre a jour » les recupere."
