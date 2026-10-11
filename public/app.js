@@ -566,9 +566,10 @@ function fmtIn(mins) {
 }
 
 /** Info-bulle d'une pastille horaire. Partagée avec syncChips et le clic pour ne pas perdre la mention AP. */
-function chipTitle(kept, preview) {
+function chipTitle(kept, preview, unconfirmed) {
   return (kept ? 'Retirer de mes séances' : 'Garder cette séance')
-    + (preview ? ' · AP = avant-première (projection avant la sortie officielle)' : '');
+    + (preview ? ' · AP = avant-première (projection avant la sortie officielle)' : '')
+    + (unconfirmed ? ' · ? = AlloCiné ne liste plus ce cinéma pour le moment : séance connue avant, à vérifier sur la billetterie' : '');
 }
 
 function timesHTML(shows) {
@@ -584,11 +585,11 @@ function timesHTML(shows) {
       const past = isToday && mins < 0;
       const soon = isToday && !past && mins <= 120;
       const kept = cartHas(state.date, s);
-      const cls = `time${past ? ' past' : ''}${s.p ? ' preview' : ''}${soon ? ' soon' : ''}${kept ? ' kept' : ''}`;
+      const cls = `time${past ? ' past' : ''}${s.p ? ' preview' : ''}${s.x ? ' unconfirmed' : ''}${soon ? ' soon' : ''}${kept ? ' kept' : ''}`;
       const badge = i === nextIndex && mins <= 240 ? `<i class="in">${fmtIn(mins)}</i>` : '';
       // Un clic met la séance de côté ; la réservation se fait depuis le panier.
       return `<button class="${cls}" data-show="${esc(JSON.stringify({ t: s.t, m: s.m, s: s.s, v: s.v, u: s.u }))}"
-        title="${chipTitle(kept, s.p)}">${s.s} <em>${s.v}${s.p ? ' · AP' : ''}</em>${badge}</button>`;
+        title="${chipTitle(kept, s.p, s.x)}">${s.s} <em>${s.v}${s.p ? ' · AP' : ''}${s.x ? ' ?' : ''}</em>${badge}</button>`;
     })
     .join('');
 }
@@ -621,7 +622,7 @@ function movieCard(m, theaterMap, total) {
       // Cohérence avec le tri choisi : si tu cherches ce qui commence le plus
       // tôt, la salle qui projette le plus tôt doit être en tête de la carte.
       if (state.sort === 'next') {
-        const soonest = (r) => r.shows.reduce((min, s) => Math.min(min, slot(s.s)), Infinity);
+        const soonest = (r) => nextSlot(r.shows);
         return soonest(a) - soonest(b);
       }
       if (state.origin) return (distanceTo(a.t) ?? 1e9) - (distanceTo(b.t) ?? 1e9);
@@ -633,10 +634,14 @@ function movieCard(m, theaterMap, total) {
   const shown = open ? rows : rows.slice(0, 6);
 
   const note = noteFilm(m);
+  // La note Letterboxd ouvre la fiche du film sur Letterboxd (pour le noter ou
+  // l'ajouter à la watchlist d'un clic).
+  const noteTag = note?.url ? 'a' : 'span';
   const noteHtml = note
-    ? `<span class="rating ${note.source === 'Letterboxd' ? 'lb' : 'ac'}"
-         title="${note.source}${note.votes ? ` — ${note.votes.toLocaleString('fr-FR')} votes` : ''}"
-       >★ ${note.valeur.toFixed(1).replace('.', ',')}<i>${note.source === 'Letterboxd' ? 'LB' : 'AC'}</i></span>`
+    ? `<${noteTag} class="rating ${note.source === 'Letterboxd' ? 'lb' : 'ac'}"
+         ${note.url ? `href="${esc(note.url)}" target="_blank" rel="noopener"` : ''}
+         title="${note.source}${note.votes ? ` — ${note.votes.toLocaleString('fr-FR')} votes` : ''}${note.url ? ' · ouvrir sur Letterboxd' : ''}"
+       >★ ${note.valeur.toFixed(1).replace('.', ',')}<i>${note.source === 'Letterboxd' ? 'LB' : 'AC'}</i></${noteTag}>`
     : '';
 
   const meta = [
@@ -682,7 +687,7 @@ function theaterCard(t, movieMap, total) {
     .filter((r) => r.m)
     .sort((a, b) => {
       if (state.sort === 'next') {
-        const soonest = (r) => r.shows.reduce((min, s) => Math.min(min, slot(s.s)), Infinity);
+        const soonest = (r) => nextSlot(r.shows);
         return soonest(a) - soonest(b);
       }
       return b.shows.length - a.shows.length || a.m.title.localeCompare(b.m.title, 'fr');
@@ -712,10 +717,26 @@ function theaterCard(t, movieMap, total) {
   </article>`;
 }
 
+/**
+ * Heure de la prochaine séance, pour le tri « prochaine séance ». Aujourd'hui,
+ * les séances déjà commencées ne comptent pas (elles restent visibles si
+ * « Masquer les séances passées » est décoché) ; un groupe sans plus rien à venir
+ * part en fin de liste.
+ */
+function nextSlot(shows) {
+  const now = state.date === todayStr() ? slot(nowHHMM()) : -1;
+  let best = Infinity;
+  for (const s of shows) {
+    const t = slot(s.s);
+    if (t >= now && t < best) best = t;
+  }
+  return best;
+}
+
 function sortEntries(entries, kind) {
   const sort = state.sort;
   const total = (sub) => [...sub.values()].reduce((n, a) => n + a.length, 0);
-  const firstTime = (sub) => [...sub.values()].flat().reduce((min, s) => Math.min(min, slot(s.s)), Infinity);
+  const firstTime = (sub) => nextSlot([...sub.values()].flat());
   // Pour un film : distance du cinéma le plus proche qui le programme.
   const nearest = (sub) => [...sub.keys()].reduce((min, tid) => {
     const km = distanceTo(state.byId.get(tid));
@@ -954,7 +975,7 @@ function syncChips() {
     try {
       const kept = cartHas(state.date, JSON.parse(chip.dataset.show));
       chip.classList.toggle('kept', kept);
-      chip.title = chipTitle(kept, chip.classList.contains('preview'));
+      chip.title = chipTitle(kept, chip.classList.contains('preview'), chip.classList.contains('unconfirmed'));
     } catch { /* attribut illisible */ }
   }
 }
@@ -1312,7 +1333,7 @@ $('#results').addEventListener('click', (e) => {
       // sauter la position de défilement, ce que le panier est censé éviter.
       const kept = cartHas(state.date, show);
       chip.classList.toggle('kept', kept);
-      chip.title = chipTitle(kept, chip.classList.contains('preview'));
+      chip.title = chipTitle(kept, chip.classList.contains('preview'), chip.classList.contains('unconfirmed'));
     } catch { /* attribut illisible */ }
     return;
   }
@@ -1539,8 +1560,10 @@ async function softRefresh() {
   if (!index) return;
   state.index = index;
 
-  // Toutes les journées ont pu changer, pas seulement celle affichée.
+  // Toutes les journées ont pu changer, pas seulement celle affichée — et les
+  // notes Letterboxd sont complétées à la fin de chaque mise à jour.
   dayCache.clear();
+  state.ratings = (await getJSON('/api/ratings')) || state.ratings;
   const day = await loadDay(state.date);
   if (!day) return;
 
