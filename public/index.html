@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Ciné IDF</title>
 <meta name="description" content="Toutes les séances de cinéma d'Île-de-France." />
-<meta name="theme-color" content="#161b23" />
+<meta name="theme-color" content="#1b1418" media="(prefers-color-scheme: dark)" />
+<meta name="theme-color" content="#f5f0f2" media="(prefers-color-scheme: light)" />
 <link rel="icon" type="image/png" sizes="256x256" href="/icon.png" />
 <link rel="apple-touch-icon" href="/icon.png" />
 <link rel="manifest" href="/manifest.webmanifest" />
@@ -14,11 +15,11 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">🎬 <span>Ciné IDF</span></div>
-  <nav class="dates" id="dates"></nav>
+  <div class="brand">Ciné IDF</div>
+  <nav class="dates" id="dates" aria-label="Jour"></nav>
   <div class="topbar-right">
     <span class="meta" id="meta"></span>
-    <button class="btn" id="refreshBtn" title="Re-télécharger les séances depuis AlloCiné">Mettre à jour</button>
+    <button class="btn" id="refreshBtn" title="Relire toutes les séances sur AlloCiné">Mettre à jour</button>
   </div>
 </header>
 
@@ -31,149 +32,175 @@
     <button class="btn ghost small" id="statusRetry" hidden>Réessayer</button>
     <button class="btn ghost small" id="statusCleanup" hidden>Supprimer le fichier</button>
     <a class="btn ghost small" id="statusOpen" target="_blank" rel="noopener" hidden>Ouvrir ma watchlist</a>
-    <button class="fav status-close" id="statusClose" title="Masquer">✕</button>
+    <button class="fav status-close" id="statusClose" title="Masquer" aria-label="Masquer">✕</button>
   </div>
   <pre id="statusLog" hidden></pre>
 </div>
 
 <div class="layout">
   <aside class="filters" id="filters">
-    <button class="filters-toggle btn ghost" id="filtersToggle">Filtres</button>
+    <button class="filters-toggle btn" id="filtersToggle">Filtres</button>
     <div class="filters-body" id="filtersBody">
 
-      <label class="field">
-        <span>Recherche</span>
-        <input type="search" id="q" placeholder="Film, cinéma, réalisateur, acteur…" autocomplete="off" />
-      </label>
+      <!-- Ce qu'on cherche -->
+      <div class="fgroup">
+        <label class="field">
+          <span>Recherche</span>
+          <input type="search" id="q" placeholder="Film, cinéma, réalisateur, acteur…" title="Raccourci : touche /" autocomplete="off" />
+        </label>
 
-      <div class="field">
-        <span>Autour de moi</span>
-        <div class="row">
-          <button class="btn ghost small" id="locate" title="Utiliser ma position actuelle">📍 Ma position</button>
-          <input type="search" id="addr" placeholder="ou une adresse…" autocomplete="off" />
+        <div class="field">
+          <span>Horaire</span>
+          <div class="chips" id="slots">
+            <button class="chip active" data-from="" data-to="">Toute la journée</button>
+            <button class="chip" data-from="00:00" data-to="13:00">Matin</button>
+            <button class="chip" data-from="13:00" data-to="18:00">Après-midi</button>
+            <button class="chip" data-from="18:00" data-to="23:59">Soirée</button>
+          </div>
+          <div class="row">
+            <input type="time" id="from" aria-label="À partir de" />
+            <span class="sep">à</span>
+            <input type="time" id="to" aria-label="Jusqu'à" />
+          </div>
         </div>
-        <div id="addrHits" class="chips" hidden></div>
-        <div id="origin" class="origin" hidden>
-          <span id="originLabel"></span>
-          <button class="fav" id="clearOrigin" title="Effacer le point de départ">✕</button>
-          <select id="radius" aria-label="Rayon">
-            <option value="">Sans limite</option>
-            <option value="1">1 km</option>
-            <option value="2">2 km</option>
-            <option value="5">5 km</option>
-            <option value="10">10 km</option>
-            <option value="20">20 km</option>
-          </select>
+
+        <div class="field">
+          <span>Version</span>
+          <div class="chips" id="versions">
+            <button class="chip active" data-v="">Toutes</button>
+            <button class="chip" data-v="VO">VO sous-titrée</button>
+            <button class="chip" data-v="VF">VF</button>
+          </div>
         </div>
+
+        <label class="field">
+          <span>Genre</span>
+          <select id="genre"><option value="">Tous les genres</option></select>
+        </label>
       </div>
 
-      <div class="field">
-        <span>Carte UGC Illimité</span>
-        <label class="check"><input type="checkbox" id="ugcOnly" checked /> Uniquement les cinémas acceptés</label>
-        <p class="muted small wl-help" id="ugcInfo"></p>
-      </div>
-
-      <div class="field">
-        <span>Ma liste à voir</span>
-        <div class="row">
-          <input type="search" id="wlAdd" placeholder="Ajouter un film…" autocomplete="off" />
-          <button class="btn ghost small" id="wlAddBtn">+</button>
+      <!-- Où -->
+      <div class="fgroup">
+        <div class="field">
+          <span>Autour de moi</span>
+          <div class="row">
+            <button class="btn small" id="locate" title="Utiliser ma position actuelle">Ma position</button>
+            <input type="search" id="addr" placeholder="ou une adresse…" autocomplete="off" />
+          </div>
+          <div id="addrHits" class="chips" hidden></div>
+          <div id="origin" class="origin" hidden>
+            <span id="originLabel"></span>
+            <select id="radius" aria-label="Rayon">
+              <option value="">Sans limite</option>
+              <option value="1">1 km</option>
+              <option value="2">2 km</option>
+              <option value="5">5 km</option>
+              <option value="10">10 km</option>
+              <option value="20">20 km</option>
+            </select>
+            <button class="fav" id="clearOrigin" title="Effacer le point de départ" aria-label="Effacer le point de départ">✕</button>
+          </div>
         </div>
-        <p class="muted small wl-help">Un film pas encore à l'affiche ? Ajoute-le : il sera
-          signalé dès qu'une séance existe.</p>
-        <div id="wlPerso"></div>
+
+        <div class="field">
+          <span>Départements</span>
+          <div class="chips" id="depts"></div>
+        </div>
+
+        <label class="field">
+          <span>Ville</span>
+          <select id="city"><option value="">Toutes les villes</option></select>
+        </label>
+
+        <label class="field">
+          <span>Cinéma</span>
+          <select id="theater"><option value="">Tous les cinémas</option></select>
+        </label>
+
+        <label class="check"><input type="checkbox" id="onlyFav" /> Uniquement mes cinémas ★</label>
+        <label class="check"><input type="checkbox" id="ugcOnly" checked /> Uniquement la carte UGC Illimité</label>
+        <p class="hint" id="ugcInfo"></p>
       </div>
 
-      <div class="field">
-        <span>Depuis Letterboxd</span>
-        <div id="wlEmpty">
-          <label class="btn ghost small wl-import" for="wlFile">Importer depuis Letterboxd</label>
-          <input type="file" id="wlFile" accept=".csv,text/csv" hidden />
-          <p class="muted small wl-help">
-            Letterboxd → Settings → <em>Import &amp; Export</em> → <em>Export your data</em>.
-            Laisse le zip dans <strong>Téléchargements</strong> : l'app le repère et l'importe
-            toute seule à la prochaine ouverture. Sinon, choisis le fichier à la main.
+      <!-- Mes listes -->
+      <div class="fgroup">
+        <div class="field">
+          <span>Ma liste à voir</span>
+          <div class="row">
+            <input type="search" id="wlAdd" placeholder="Ajouter un film…" autocomplete="off" />
+            <button class="btn small" id="wlAddBtn" aria-label="Ajouter">+</button>
+          </div>
+          <p class="hint">Pas encore à l'affiche ? Il sera signalé dès qu'une séance existe.</p>
+          <div id="wlPerso"></div>
+        </div>
+
+        <div class="field">
+          <span>Watchlist Letterboxd</span>
+          <div id="lbSetup">
+            <div class="row lb-row">
+              <input type="search" id="lbUser" placeholder="Ton pseudo Letterboxd" autocomplete="off" spellcheck="false" />
+              <button class="btn small" id="lbUserBtn">Relier</button>
+            </div>
+            <p class="hint" id="lbSetupHint">Ta watchlist sera relue toute seule à chaque ouverture. Elle doit être
+              publique sur Letterboxd (c'est le réglage par défaut).</p>
+          </div>
+          <div id="lbLinked" hidden>
+            <div class="origin">
+              <span id="lbLabel"></span>
+              <button class="btn ghost small" id="lbSync" title="Relire ma watchlist maintenant">Synchroniser</button>
+            </div>
+            <p class="hint" id="lbState"></p>
+          </div>
+          <div id="wlLoaded" hidden>
+            <div class="origin" id="wlFileBox">
+              <span id="wlLabel"></span>
+              <button class="fav" id="wlClear" title="Vider ma liste à voir" aria-label="Vider ma liste à voir">✕</button>
+            </div>
+            <label class="check"><input type="checkbox" id="onlyWatchlist" /> Uniquement ma liste à voir</label>
+            <p class="hint" id="wlAge" hidden></p>
+          </div>
+          <p class="hint lb-alt">
+            <button class="linklike" id="lbChange" hidden>Changer de compte</button>
+            <span id="wlEmpty"><label class="linklike wl-import" for="wlFile">ou importer un fichier d'export</label></span>
+            <input type="file" id="wlFile" accept=".csv,text/csv" hidden />
           </p>
         </div>
-        <div id="wlLoaded" hidden>
-          <div class="origin">
-            <span id="wlLabel"></span>
-            <button class="fav" id="wlClear" title="Vider ma liste à voir">✕</button>
-          </div>
-          <label class="check"><input type="checkbox" id="onlyWatchlist" /> Uniquement ma liste à voir</label>
-          <p class="muted small wl-help" id="wlAge" hidden></p>
-          <label class="btn ghost small wl-import" for="wlFile">Réimporter depuis Letterboxd</label>
-        </div>
       </div>
 
-      <div class="field">
-        <span>Départements</span>
-        <div class="chips" id="depts"></div>
+      <!-- Affichage -->
+      <div class="fgroup">
+        <label class="check"><input type="checkbox" id="hidePast" checked /> Masquer les séances passées</label>
+        <label class="check"><input type="checkbox" id="hidePreview" /> Masquer les avant-premières</label>
+        <button class="btn ghost small" id="reset">Réinitialiser les filtres</button>
       </div>
-
-      <label class="field">
-        <span>Ville</span>
-        <select id="city"><option value="">Toutes les villes</option></select>
-      </label>
-
-      <label class="field">
-        <span>Cinéma</span>
-        <select id="theater"><option value="">Tous les cinémas</option></select>
-      </label>
-
-      <div class="field">
-        <span>Version</span>
-        <div class="chips" id="versions">
-          <button class="chip active" data-v="">Toutes</button>
-          <button class="chip" data-v="VO">VO / VOST</button>
-          <button class="chip" data-v="VF">VF</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <span>Horaire</span>
-        <div class="chips" id="slots">
-          <button class="chip active" data-from="" data-to="">Tout</button>
-          <button class="chip" data-from="00:00" data-to="13:00">Matin</button>
-          <button class="chip" data-from="13:00" data-to="18:00">Après-midi</button>
-          <button class="chip" data-from="18:00" data-to="23:59">Soirée</button>
-        </div>
-        <div class="row">
-          <input type="time" id="from" aria-label="À partir de" />
-          <span class="sep">→</span>
-          <input type="time" id="to" aria-label="Jusqu'à" />
-        </div>
-      </div>
-
-      <label class="field">
-        <span>Genre</span>
-        <select id="genre"><option value="">Tous les genres</option></select>
-      </label>
-
-      <label class="check"><input type="checkbox" id="onlyFav" /> Uniquement mes cinémas ★</label>
-      <label class="check"><input type="checkbox" id="hidePast" checked /> Masquer les séances passées</label>
-      <label class="check"><input type="checkbox" id="hidePreview" /> Masquer les avant-premières</label>
-
-      <button class="btn ghost small" id="reset">Réinitialiser les filtres</button>
     </div>
   </aside>
 
   <main class="content">
+    <header class="day-hero" id="dayHero">
+      <p class="day-kicker" id="dayKicker" hidden></p>
+      <h1 class="day-title" id="dayTitle">À l'affiche</h1>
+      <p class="day-sub" id="daySub"></p>
+    </header>
+    <section class="wl-week" id="wlWeek" hidden aria-label="Ta watchlist cette semaine">
+      <h2 class="wl-week-title">Ta watchlist cette semaine</h2>
+      <div class="wl-week-row" id="wlWeekRow"></div>
+    </section>
     <div class="toolbar">
-      <div class="chips" id="view">
+      <div class="segmented" id="view" role="group" aria-label="Affichage">
         <button class="chip active" data-view="films">Par film</button>
         <button class="chip" data-view="theaters">Par cinéma</button>
       </div>
       <label class="inline">
-        Trier :
+        Trier par
         <select id="sort">
           <option value="popular">Le plus de séances</option>
-          <option value="near">Le plus proche</option>
-          <option value="alpha">Ordre alphabétique</option>
-          <option value="rating">Mieux notés (Letterboxd)</option>
-          <option value="press">Mieux notés (presse)</option>
-          <option value="recent">Sorties les plus récentes</option>
           <option value="next">Prochaine séance</option>
+          <option value="near">Le plus proche</option>
+          <option value="rating">Note Letterboxd</option>
+          <option value="press">Note presse</option>
+          <option value="recent">Sorties récentes</option>
+          <option value="alpha">Ordre alphabétique</option>
         </select>
       </label>
       <div class="count" id="count"></div>
@@ -183,15 +210,23 @@
 </div>
 
 <button class="cart-fab" id="cartFab" hidden>
-  <span class="cart-fab-icon">🎟</span><span class="cart-fab-count" id="cartCount">0</span>
+  <span class="cart-fab-icon" aria-hidden="true">🎟</span><span class="cart-fab-label">Mes séances</span><span class="cart-fab-count" id="cartCount">0</span>
 </button>
+
+<div class="film-sheet" id="filmSheet" hidden>
+  <div class="film-sheet-backdrop" data-close-film></div>
+  <section class="film-sheet-panel" id="filmSheetPanel" role="dialog" aria-modal="true" aria-label="Séances du film">
+    <button class="fav film-sheet-close" id="filmSheetClose" data-close-film title="Fermer (Échap)" aria-label="Fermer">✕</button>
+    <div id="filmSheetBody"></div>
+  </section>
+</div>
 
 <aside class="cart" id="cart" hidden>
   <header class="cart-head">
     <strong>Mes séances</strong>
     <span class="muted small" id="cartSummary"></span>
     <button class="btn ghost small" id="cartClear">Vider</button>
-    <button class="fav" id="cartClose" title="Fermer">✕</button>
+    <button class="fav" id="cartClose" title="Fermer" aria-label="Fermer">✕</button>
   </header>
   <div class="cart-body" id="cartBody"></div>
 </aside>
