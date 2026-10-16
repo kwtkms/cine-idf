@@ -61,9 +61,25 @@ $s.Save()
 Le dossier `cine-idf` peut être déplacé n'importe où — il suffit de recréer le raccourci
 depuis son nouvel emplacement.
 
+## Apparence
+
+Thème « salle obscure » (refait le 15/10/2026) : fond prune sombre, texte couleur d'écran, un seul
+accent ambré pour ce qui est sélectionné et les séances qui approchent. Le thème clair suit
+automatiquement le réglage de Windows. Titres, dates et horaires en Bahnschrift (police fournie
+avec Windows), le reste en Segoe UI : aucune police à télécharger, l'app reste hors ligne.
+Les horaires sont des tickets — « 20:40 ┊ VF » — et chaque cinéma tient sur une ligne.
+Ambiance de salle : halo du projecteur en haut de l'écran, grain de pellicule très léger,
+bande perforée sous la barre du haut, et chaque fiche teintée par son affiche floutée. En tête
+des résultats, l'**affiche du jour** : « Ce soir » / « Vendredi 16 octobre » en grandes lettres,
+le nombre de séances et l'heure de la prochaine, sur l'affiche du premier film.
+
+Raccourcis : **/** place le curseur dans la recherche, **Échap** la vide ou ferme le panier.
+
 ## Ce que tu peux faire
 
-- **Par film** : chaque film avec tous les cinémas qui le passent et les horaires.
+- **Par film** : un mur d'affiches, sans horaires — titre, note, prochaine séance, nombre de
+  cinémas. **Un clic sur un film** ouvre un panneau avec tous ses cinémas et horaires, et les
+  autres jours où il passe (un clic change de jour sans fermer). Échap ou clic à côté ferme.
 - **Par cinéma** : chaque salle avec sa programmation du jour.
 - **Autour de moi** : géolocalisation ou saisie d'une adresse, distance affichée sur
   chaque salle, filtre par rayon (1 à 20 km) et tri par proximité.
@@ -180,65 +196,48 @@ récupère au plus 120 par passage pour ne pas s'éterniser.
 
 ## Ma liste à voir
 
-Elle se remplit de deux façons, qui se cumulent.
+### Watchlist Letterboxd : synchronisée toute seule
 
-**1. Dans l'app, en un clic.** Chaque film porte un bouton **+** ; il passe en ✓ vert
-et rejoint ta liste. C'est ce qui rend l'app autonome au quotidien : tu vois un film
-qui t'intéresse, tu le marques, tu le retrouves les jours suivants.
+Dans le panneau de gauche, **tape ton pseudo Letterboxd et clique Relier** (coller
+l'adresse de ton profil marche aussi). C'est tout : l'app relit ta watchlist **à chaque
+ouverture, puis toutes les 30 minutes** tant qu'elle reste ouverte. Tu ajoutes un film
+sur ton téléphone, il apparaît dans l'app sans rien faire. Un bouton **Synchroniser**
+force une relecture immédiate.
 
-**2. Marque-page « Envoyer vers Ciné IDF ».**
+La watchlist doit être **publique** sur Letterboxd (réglage par défaut).
 
-Installe-le une fois : ouvre `http://localhost:4173/marque-page.html` et glisse le
-bouton dans ta barre de favoris.
+**Comment** (`src/letterboxd-watchlist.js`) : depuis l'automne 2026, la page
+`letterboxd.com/<pseudo>/watchlist/` est rendue côté serveur. Chaque film y figure avec
+son titre, son année et son identifiant Letterboxd (`data-item-name="May (2002)"
+data-item-slug="may"`), 28 par page. L'app relit les pages une à une. Vérifié le
+16/10/2026 : 77 films sur 3 pages, exactement le compteur affiché par Letterboxd. Une
+lecture incomplète (coupure, Letterboxd qui ne répond pas) n'écrase jamais la liste
+existante, et un pseudo mal tapé ne remplace pas celui qui marche.
 
-Ensuite, depuis un ordinateur : ouvre ta page watchlist Letterboxd et clique le favori.
-Il charge toute la liste et l'envoie à l'app. Ça récupère aussi ce que tu as ajouté
-depuis ton téléphone.
+**Correspondance sûre** : en plus du titre (original ou français, à un an près),
+l'app compare l'identifiant Letterboxd du film, connu grâce aux notes et à Wikidata.
+« 12 Angry Men » est ainsi reconnu sous « 12 hommes en colère », que le titre seul ratait.
 
-**Pourquoi ça marche alors que le scraping échoue ?** Parce que ça s'exécute dans *ton*
-navigateur, sur une page où tu es connecté et où le challenge Cloudflare est déjà résolu.
-Vu de l'extérieur la watchlist est inaccessible ; vue de ta page, elle est dans le DOM.
+### Ta watchlist cette semaine
 
-Deux détails qui expliquent mes échecs précédents : Letterboxd a renommé son attribut
-`data-film-slug` en `data-item-slug`, et le titre + l'année sont dans le texte
-alternatif de l'affiche (`Poster for Whiplash (2014)`).
+En haut de l'app, une bande montre **les films de ta watchlist qui passent sur les
+jours récupérés**, avec leurs jours (« Sam, dim »). Un clic ouvre le film au premier
+jour où il passe. Elle suit les mêmes critères de lieu que la liste (carte UGC,
+départements, favoris…).
 
-Le favori tente d'abord un envoi direct. Si le navigateur le bloque — un site public
-appelant une adresse locale, c'est restreint — il affiche un bouton de secours qui
-ouvre Ciné IDF avec la liste. Les deux chemins sont testés.
+### Ajouts dans l'app
 
-**Ciné IDF doit tourner** au moment du clic.
+Chaque film a un bouton **+** : il passe en ✓ vert et rejoint ta liste, même s'il
+n'est pas dans ta watchlist Letterboxd. Et le champ **Ajouter un film** accepte un
+film pas encore à l'affiche : il sera signalé dès qu'une séance existe.
 
-**3. Export CSV — le repli.**
+### Secours
 
-1. Letterboxd → **Settings** → **Import & Export** → **Export your data**
-2. Laisse le zip dans **Téléchargements**. C'est tout.
-
-À la prochaine ouverture, l'app repère l'export, en extrait `watchlist.csv` et
-l'importe seule. Pas de dézippage, pas de fichier à choisir. Un bandeau confirme
-(« Watchlist reprise depuis letterboxd-….zip — 4 films ») avec un bouton
-**Supprimer le fichier**, pour que les exports ne s'accumulent pas.
-
-Un export déjà repris n'est jamais réimporté : la comparaison se fait sur la date du
-fichier. Le bouton **Réimporter** reste là si tu préfères choisir le fichier à la main.
-
-La lecture du zip se fait sans dépendance — Node sait déjà décompresser, il ne manquait
-que la lecture de l'index de l'archive. Passé 14 jours, l'app te rappelle discrètement
-que l'import date. Les films venus de Letterboxd n'ont
-pas de bouton de retrait dans l'app : on les enlève sur Letterboxd puis on réimporte,
-pour que les deux listes ne divergent pas en silence.
-
-**Pourquoi pas une synchro automatique ?** Vérifié : Letterboxd n'a pas d'API ouverte,
-pas de flux RSS pour la watchlist (le RSS ne donne que les films *vus*), et toutes
-leurs grilles de posters — watchlist comprise — sont rendues par JavaScript, donc
-absentes du HTML. Il faudrait piloter un navigateur sans interface (~300 Mo de
-dépendances) pour une app qui n'en a aucune. Le bouton **+** couvre le besoin
-quotidien, l'import couvre la reprise du stock.
-
-Le rapprochement des titres se fait sur le **titre original** et le titre français,
-avec un an de tolérance sur l'année (production côté Letterboxd, sortie française côté
-AlloCiné) : « A Clockwork Orange » retrouve « Orange mécanique ». Un titre très remanié
-peut passer à travers — limite inhérente à l'absence d'identifiant commun.
+- **Import d'un fichier** : si ta watchlist est privée, « ou importer un fichier
+  d'export » (Letterboxd → Settings → Import & Export → Export your data). Un zip
+  laissé dans Téléchargements est aussi repris tout seul à l'ouverture.
+- **Marque-page** (`/marque-page.html`) : l'ancienne méthode, d'avant la page
+  rendue côté serveur. Il marche toujours, mais il n'est plus nécessaire.
 
 ## Commandes (si besoin, en dehors de l'app)
 
@@ -249,6 +248,7 @@ peut passer à travers — limite inhérente à l'absence d'identifiant commun.
 | `node src/scrape.js --force` | ignore le cache et tout refaire |
 | `node src/scrape.js --theaters-only` | met à jour la seule liste des salles |
 | `npm start` | serveur seul (port 4173, ou `PORT=8080 npm start`) |
+| `node src/letterboxd-watchlist.js <pseudo>` | relit la watchlist Letterboxd publique |
 | `npm run verify` | compare séance par séance l'app et AlloCiné, aujourd'hui et demain (~10 min ; `-- --days=5` pour tout) |
 | `npm run calibrate` | remesure le débit toléré par AlloCiné (~6 min) |
 | `npm run geocode` | (re)calcule les coordonnées des salles (`--force` pour tout refaire) |

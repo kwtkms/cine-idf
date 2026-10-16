@@ -21,7 +21,9 @@ const state = {
   limit: PAGE,
   favs: new Set(load('cineidf.favs', [])),
   origin: load('cineidf.origin', null),        // { lat, lon, label }
-  watchlist: load('cineidf.watchlist', null),  // [{ title, year }] issu de Letterboxd
+  watchlist: load('cineidf.watchlist', null),  // [{ title, year, slug }] issu de Letterboxd
+  lbStatus: null,                              // synchro auto : { pseudo, at, ok, error, count }
+  lbSyncing: false,
   wlImportedAt: load('cineidf.wlDate', null),  // quand le CSV a été importé
   wlLocal: new Set(load('cineidf.wlLocal', [])), // films cochés depuis une fiche à l'affiche
   wlPerso: load('cineidf.wlPerso', []),          // films saisis à la main, même absents de l'affiche
@@ -242,6 +244,17 @@ function watchlistMatches(day) {
   const wl = [...(state.watchlist || []), ...state.wlPerso];
   if (!wl.length) return hit;
 
+  // Identifiant Letterboxd connu des deux côtés : correspondance sûre, même
+  // quand le titre français n'a rien à voir (« Les Sept Samouraïs » / seven-samurai).
+  const slugs = new Set(wl.map((x) => x.slug).filter(Boolean));
+  if (slugs.size) {
+    for (const m of Object.values(day.movies)) {
+      const r = state.ratings[m.id];
+      const slug = r?.slug || r?.wd;
+      if (slug && slugs.has(slug)) hit.add(m.id);
+    }
+  }
+
   const index = new Map(); // titre normalisé -> années
   for (const item of wl) {
     const k = norm(item.title);
@@ -288,7 +301,9 @@ function distanceTo(theater) {
 const fmtKm = (km) => (km == null ? '' : km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1).replace('.', ',')} km`);
 // AlloCine sert des vignettes redimensionnees : inutile de tirer l'affiche pleine taille.
 const thumb = (url) => (url ? url.replace('.net/img/', '.net/r_200_300/img/') : null);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// Date LOCALE (format suédois = AAAA-MM-JJ). toISOString donnait la date UTC :
+// entre minuit et 2 h, l'app se croyait encore la veille.
+const todayStr = () => new Date().toLocaleDateString('sv');
 const nowHHMM = () => new Date().toTimeString().slice(0, 5);
 
 function fmtDate(iso) {
@@ -331,6 +346,7 @@ async function boot() {
   state.index = await getJSON('/api/index');
   const theaters = await getJSON('/api/theaters');
   state.ratings = (await getJSON('/api/ratings')) || {};
+  state.lbStatus = await getJSON('/api/watchlist/status');
   if (!state.index || !theaters) return waitForFirstData();
   watchRefresh(); // suppose un index déjà chargé
 
@@ -415,10 +431,7 @@ function renderDates() {
       <span>${esc(num)}${partial ? ' <i>·</i>' : ''}</span><small>${esc(label)}</small></button>`;
   }).join('');
 
-  const gen = new Date(state.index.generatedAt);
-  $('#meta').textContent =
-    `${state.index.theaterCount} cinémas · maj ${gen.toLocaleDateString('fr-FR')} ${gen.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` +
-    (state.index.partial ? ' · données partielles' : '');
+  $('#meta').textContent = metaText();
 }
 
 function buildStaticFilters() {
@@ -448,6 +461,7 @@ function buildStaticFilters() {
 }
 
 function renderUgc() {
+  if (state.index) $('#meta').textContent = metaText();
   const total = state.theaters.length;
   const acceptes = state.theaters.filter((t) => t.ugc).length;
   $('#ugcOnly').checked = state.filters.ugcOnly;
@@ -612,7 +626,7 @@ function favBtn(id) {
   return `<button class="fav ${on ? 'on' : ''}" data-fav="${id}" title="${on ? 'Retirer de mes cinémas' : 'Ajouter à mes cinémas'}">${on ? '★' : '☆'}</button>`;
 }
 
-function movieCard(m, theaterMap, total) {
+function movieCard(m, theaterMap, total, { full = false } = {}) {
   const rows = [...theaterMap.entries()]
     .map(([tid, shows]) => ({ t: state.byId.get(tid), shows }))
     .filter((r) => r.t)
@@ -621,17 +635,17 @@ function movieCard(m, theaterMap, total) {
       if (fa !== fb) return fa - fb;
       // Cohérence avec le tri choisi : si tu cherches ce qui commence le plus
       // tôt, la salle qui projette le plus tôt doit être en tête de la carte.
-      if (state.sort === 'next') {
-        const soonest = (r) => nextSlot(r.shows);
-        return soonest(a) - soonest(b);
-      }
-      if (state.origin) return (distanceTo(a.t) ?? 1e9) - (distanceTo(b.t) ?? 1e9);
-      return a.t.name.localeCompare(b.t.name, 'fr');
+      // Sinon : par distance si un point de départ est donné, et par défaut
+      // par prochaine séance — plus utile que l'ordre alphabétique.
+      const soonest = (r) => nextSlot(r.shows);
+      if (state.origin && state.sort !== 'next') return (distanceTo(a.t) ?? 1e9) - (distanceTo(b.t) ?? 1e9);
+      const d = soonest(a) - soonest(b);
+      return (Number.isNaN(d) ? 0 : d) || a.t.name.localeCompare(b.t.name, 'fr');
     });
 
   const key = `m${m.id}`;
   const open = state.expanded?.has(key);
-  const shown = open ? rows : rows.slice(0, 6);
+  const shown = open || full ? rows : rows.slice(0, 6);
 
   const note = noteFilm(m);
   // La note Letterboxd ouvre la fiche du film sur Letterboxd (pour le noter ou
@@ -657,8 +671,12 @@ function movieCard(m, theaterMap, total) {
     m.cast?.length ? `avec ${esc(m.cast.join(', '))}` : '',
   ].filter(Boolean).join('<span class="dot">·</span>');
 
-  return `<article class="card">
-    ${m.poster ? `<img class="poster" loading="lazy" referrerpolicy="no-referrer" src="${esc(thumb(m.poster))}" alt="">` : `<div class="poster"></div>`}
+  // L'affiche, floutée, teinte le fond de la fiche (adresse vérifiée avant
+  // d'entrer dans le CSS : seulement une URL https sans caractère spécial).
+  const vignette = thumb(m.poster);
+  const ambiance = vignette && /^https:\/\/[^\s"'()\\]+$/.test(vignette) ? ` style="--poster:url('${vignette}')"` : '';
+  return `<article class="card film"${ambiance}>
+    ${m.poster ? `<img class="poster" loading="lazy" referrerpolicy="no-referrer" src="${esc(vignette)}" alt="">` : `<div class="poster"></div>`}
     <div class="card-body">
       <h3 class="card-title">
         ${wlToggle(m)}
@@ -668,36 +686,41 @@ function movieCard(m, theaterMap, total) {
       </h3>
       <div class="card-meta">${meta}</div>
       ${people ? `<div class="card-people">${people}</div>` : ''}
+      ${full && m.synopsis ? `<p class="card-synopsis">${esc(m.synopsis)}</p>` : ''}
+      ${full ? `<div class="card-links">${m.url ? `<a class="btn ghost small" href="${esc(m.url)}" target="_blank" rel="noopener">Fiche AlloCiné</a>` : ''}<a class="btn ghost small" href="${esc(note?.url || `https://letterboxd.com/search/films/${encodeURIComponent(m.originalTitle || m.title)}/`)}" target="_blank" rel="noopener">Letterboxd</a></div>` : ''}
       ${shown.map((r) => `<div class="group">
         <div class="group-head">
           ${favBtn(r.t.id)}
-          <span class="group-name">${esc(r.t.name)}</span>
+          ${full ? `<button class="group-name linklike" data-cine="${esc(r.t.id)}" title="Voir tout le programme de ce cinéma">${esc(r.t.name)}</button>` : `<span class="group-name">${esc(r.t.name)}</span>`}
           <span class="group-sub">${esc(r.t.city)}${state.origin ? ` · ${fmtKm(distanceTo(r.t))}` : ''}</span>
         </div>
         <div class="times">${timesHTML(r.shows)}</div>
       </div>`).join('')}
-      ${rows.length > 6 ? `<button class="more" data-expand="${key}">${open ? '− Réduire' : `+ ${rows.length - 6} autres cinémas`}</button>` : ''}
+      ${!full && rows.length > 6 ? `<button class="more" data-expand="${key}">${open ? '− Réduire' : `+ ${rows.length - 6} autres cinémas`}</button>` : ''}
     </div>
   </article>`;
 }
 
-function theaterCard(t, movieMap, total) {
+function theaterCard(t, movieMap, total, { full = false } = {}) {
   const rows = [...movieMap.entries()]
     .map(([mid, shows]) => ({ m: state.day.movies[mid], shows }))
     .filter((r) => r.m)
     .sort((a, b) => {
-      if (state.sort === 'next') {
-        const soonest = (r) => nextSlot(r.shows);
-        return soonest(a) - soonest(b);
+      // Dans le panneau (ou avec le tri « prochaine séance ») : ce qui commence
+      // le plus tôt d'abord. Sinon, les films les plus programmés.
+      if (full || state.sort === 'next') {
+        const d = nextSlot(a.shows) - nextSlot(b.shows);
+        return (Number.isNaN(d) ? 0 : d) || a.m.title.localeCompare(b.m.title, 'fr');
       }
       return b.shows.length - a.shows.length || a.m.title.localeCompare(b.m.title, 'fr');
     });
 
   const key = `t${t.id}`;
   const open = state.expanded?.has(key);
-  const shown = open ? rows : rows.slice(0, 8);
+  const shown = open || full ? rows : rows.slice(0, 8);
+  const itineraire = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${t.name} ${t.address}`)}`;
 
-  return `<article class="card">
+  return `<article class="card cine">
     <div class="card-body">
       <h3 class="card-title">
         ${favBtn(t.id)}
@@ -705,14 +728,15 @@ function theaterCard(t, movieMap, total) {
         <span class="group-sub">${plural(total, 'séance')} · ${plural(rows.length, 'film')}</span>
       </h3>
       <div class="card-meta">${esc(t.address)}${state.origin ? `<span class="dot">·</span>${fmtKm(distanceTo(t))}` : ''}</div>
+      ${full ? `<div class="card-links"><a class="btn small" href="${esc(itineraire)}" target="_blank" rel="noopener">Itinéraire</a><a class="btn ghost small" href="${esc(t.url)}" target="_blank" rel="noopener">Page AlloCiné</a></div>` : ''}
       ${shown.map((r) => `<div class="group">
         <div class="group-head">
-          <span class="group-name">${esc(r.m.title)}</span>
-          <span class="group-sub">${[fmtRuntime(r.m.runtime), (r.m.genres || [])[0]].filter(Boolean).join(' · ')}</span>
+          ${full ? `<button class="group-name linklike" data-film="${r.m.id}" title="Voir ce film partout">${esc(r.m.title)}</button>` : `<span class="group-name">${esc(r.m.title)}</span>`}
+          <span class="group-sub">${[fmtRuntime(r.m.runtime), (r.m.genres || [])[0], noteFilm(r.m) ? `★ ${noteFilm(r.m).valeur.toFixed(1).replace('.', ',')}` : ''].filter(Boolean).join(' · ')}</span>
         </div>
         <div class="times">${timesHTML(r.shows)}</div>
       </div>`).join('')}
-      ${rows.length > 8 ? `<button class="more" data-expand="${key}">${open ? '− Réduire' : `+ ${rows.length - 8} autres films`}</button>` : ''}
+      ${!full && rows.length > 8 ? `<button class="more" data-expand="${key}">${open ? '− Réduire' : `+ ${rows.length - 8} autres films`}</button>` : ''}
     </div>
   </article>`;
 }
@@ -768,6 +792,185 @@ function sortEntries(entries, kind) {
   });
 }
 
+/**
+ * L'affiche du jour, en tête des résultats : la date en lettres d'enseigne,
+ * ce qu'il y a à voir, et l'heure de la prochaine séance. Le fond reprend
+ * l'affiche floutée du premier film de la liste.
+ */
+function renderHero(shows, entries) {
+  const d = new Date(state.date + 'T12:00:00');
+  const isToday = state.date === todayStr();
+  const jour = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const tard = isToday && new Date().getHours() >= 17;
+  $('#dayTitle').textContent = isToday ? (tard ? 'Ce soir' : "Aujourd'hui") : jour.charAt(0).toUpperCase() + jour.slice(1);
+  $('#dayKicker').textContent = isToday ? jour : '';
+  $('#dayKicker').hidden = !isToday;
+
+  const films = new Set(shows.map((s) => s.m)).size;
+  const salles = new Set(shows.map((s) => s.t)).size;
+  const parts = shows.length
+    ? [`${plural(shows.length, 'séance')}`, `${plural(films, 'film')}`, `${plural(salles, 'cinéma')}`]
+    : [];
+  const prochaine = isToday ? nextSlot(shows) : Infinity;
+  if (Number.isFinite(prochaine)) {
+    const hh = String(Math.floor(prochaine / 60)).padStart(2, '0');
+    const mm = String(prochaine % 60).padStart(2, '0');
+    parts.push(`prochaine à ${hh}h${mm}`);
+  }
+  // Espaces insécables dans chaque info : « prochaine à 21h00 » ne se coupe pas.
+  $('#daySub').textContent = parts.map((p) => p.replace(/ /g, '\u00a0')).join('   ');
+
+  // Fond : l'affiche du premier film affiché (vue par film) ou du film le plus
+  // programmé de la journée (vue par cinéma).
+  let mid = state.view === 'films' ? entries[0]?.[0] : null;
+  if (mid == null && shows.length) {
+    const n = new Map();
+    for (const s of shows) n.set(s.m, (n.get(s.m) || 0) + 1);
+    mid = [...n.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  }
+  const url = thumb(state.day?.movies[mid]?.poster);
+  const hero = $('#dayHero');
+  if (url && /^https:\/\/[^\s"'()\\]+$/.test(url)) hero.style.setProperty('--poster', `url('${url}')`);
+  else hero.style.removeProperty('--poster');
+}
+
+/** Heure lisible « 21h00 » depuis des minutes depuis minuit. */
+const fmtSlot = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}h${String(min % 60).padStart(2, '0')}`;
+
+/**
+ * Une tuile de film : l'affiche, le titre, la note et l'essentiel (prochaine
+ * séance, nombre de cinémas). Les horaires s'ouvrent au clic, dans le panneau.
+ */
+function filmTile(m, theaterMap, total) {
+  const flat = [...theaterMap.values()].flat();
+  const premiere = state.date === todayStr() ? nextSlot(flat) : Math.min(...flat.map((x) => slot(x.s)));
+  const note = noteFilm(m);
+  const vignette = thumb(m.poster);
+  const vu = state.wlHits.has(m.id);
+  const infos = [
+    Number.isFinite(premiere) ? (state.date === todayStr() ? `prochaine à ${fmtSlot(premiere)}` : `dès ${fmtSlot(premiere)}`) : '',
+    plural(theaterMap.size, 'cinéma'),
+  ].filter(Boolean).join(' · ');
+  return `<button class="film-tile" data-film="${m.id}" title="Voir les cinémas et les horaires">
+    <span class="tile-poster">
+      ${vignette ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(vignette)}" alt="">` : `<span class="tile-noposter">${esc(m.title)}</span>`}
+      ${vu ? '<span class="tile-badge">à voir</span>' : ''}
+      ${note ? `<span class="tile-note ${note.source === 'Letterboxd' ? 'lb' : 'ac'}">★ ${note.valeur.toFixed(1).replace('.', ',')}</span>` : ''}
+    </span>
+    <span class="tile-title">${esc(m.title)}</span>
+    <span class="tile-info">${esc(infos)}</span>
+  </button>`;
+}
+
+/**
+ * Une tuile de cinéma : un bandeau des affiches qu'il passe, son nom, et
+ * l'essentiel (ville, distance, nombre de films, prochaine séance).
+ */
+function theaterTile(t, movieMap, total) {
+  const rows = [...movieMap.entries()]
+    .map(([mid, shows]) => ({ m: state.day.movies[mid], n: shows.length }))
+    .filter((r) => r.m)
+    .sort((a, b) => b.n - a.n);
+  const affiches = rows.map((r) => thumb(r.m.poster)).filter(Boolean).slice(0, 4);
+  const flat = [...movieMap.values()].flat();
+  const premiere = state.date === todayStr() ? nextSlot(flat) : Math.min(...flat.map((x) => slot(x.s)));
+  const lieu = [t.city, state.origin ? fmtKm(distanceTo(t)) : ''].filter(Boolean).join(' · ');
+  const infos = [
+    plural(rows.length, 'film'),
+    Number.isFinite(premiere) ? (state.date === todayStr() ? `prochaine à ${fmtSlot(premiere)}` : `dès ${fmtSlot(premiere)}`) : '',
+  ].filter(Boolean).join(' · ');
+  return `<button class="cine-tile" data-cine="${esc(t.id)}" title="Voir les films et les horaires">
+    <span class="cine-posters">${affiches.map((u) => `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(u)}" alt="">`).join('')}</span>
+    <span class="cine-name">${state.favs.has(t.id) ? '<i class="cine-fav" title="Dans mes cinémas">★</i>' : ''}${esc(t.name)}</span>
+    <span class="tile-info">${esc(lieu)}</span>
+    <span class="tile-info">${esc(infos)}</span>
+  </button>`;
+}
+
+/** Ouvre (ou ferme avec null) le panneau d'un film. */
+function openFilm(id, kind = 'film') {
+  state.filmOpen = id;
+  state.sheetKind = kind;
+  $('#filmSheet').hidden = id == null;
+  document.body.classList.toggle('sheet-open', id != null);
+  if (id != null) {
+    renderFilmSheet();
+    $('#filmSheetPanel').scrollTop = 0;
+    $('#filmSheetClose').focus({ preventScroll: true });
+  }
+}
+
+/**
+ * Contenu du panneau : la fiche complète du film avec toutes ses salles, pour
+ * la date et les filtres en cours. Changer de jour garde le panneau ouvert :
+ * pratique pour voir le même film un autre soir.
+ */
+function renderFilmSheet() {
+  if (state.filmOpen == null || !state.day) return;
+  const id = String(state.filmOpen);
+  const cine = state.sheetKind === 'theater';
+  const shows = filteredShows().filter((x) => String(cine ? x.t : x.m) === id);
+  const [, num] = fmtDate(state.date);
+  const jours = `<nav class="sheet-days" id="sheetDays" aria-label="Autres jours"></nav>`;
+  const t = cine ? state.byId.get(id) : null;
+  const m = cine ? null : state.day.movies[id];
+  if (!shows.length || (cine ? !t : !m)) {
+    $('#filmSheetBody').innerHTML = jours + `<div class="empty"><h2>Pas de séance le ${esc(num)}</h2>
+      <p>Avec les filtres actuels, ${cine ? 'ce cinéma n\'a' : 'ce film n\'a'} pas de séance ce jour-là. Choisis un autre jour ci-dessus.</p></div>`;
+  } else if (cine) {
+    const byMovie = groupBy(shows, (x) => x.t, (x) => x.m).get(t.id) || new Map();
+    $('#filmSheetBody').innerHTML = jours + theaterCard(t, byMovie, shows.length, { full: true });
+  } else {
+    const byTheater = groupBy(shows, (x) => x.m, (x) => x.t).get(m.id) || new Map();
+    $('#filmSheetBody').innerHTML = jours + movieCard(m, byTheater, shows.length, { full: true });
+  }
+  renderSheetDays(id, cine ? 'theater' : 'film');
+}
+
+/**
+ * Les jours où ce film passe, avec le nombre de séances, en tête du panneau.
+ * Mêmes critères de lieu et de version que la liste (pas la recherche ni
+ * l'horaire, propres à la journée affichée). Un clic change de jour sans
+ * fermer le panneau.
+ */
+let sheetDaysToken = 0;
+async function renderSheetDays(id, kind = 'film') {
+  const token = ++sheetDaysToken;
+  const f = state.filters;
+  const garde = (s) => {
+    const t = state.byId.get(s.t);
+    if (!t || String(kind === 'theater' ? s.t : s.m) !== id) return false;
+    if (f.ugcOnly && !t.ugc) return false;
+    if (f.onlyFav && !state.favs.has(s.t)) return false;
+    if (f.depts.length && !f.depts.includes(t.dept)) return false;
+    if (f.city && t.city !== f.city) return false;
+    if (f.theater && s.t !== f.theater) return false;
+    if (f.version === 'VO' && s.v === 'VF') return false;
+    if (f.version === 'VF' && s.v !== 'VF') return false;
+    if (f.hidePreview && s.p) return false;
+    return true;
+  };
+  const jours = [];
+  const auj = todayStr();
+  const maintenant = slot(nowHHMM());
+  for (const d of state.index.days) {
+    const day = await loadDay(d.date);
+    if (token !== sheetDaysToken) return; // panneau changé entre-temps
+    // Aujourd'hui : comme la liste, sans les séances déjà commencées.
+    const passee = (x) => d.date === auj && f.hidePast && slot(x.s) < maintenant;
+    const n = day ? day.shows.filter((x) => garde(x) && !passee(x)).length : 0;
+    if (n) jours.push({ date: d.date, n });
+  }
+  const box = $('#sheetDays');
+  // Un seul jour, et c'est celui affiché : rien à proposer.
+  if (!box || !jours.length || (jours.length === 1 && jours[0].date === state.date)) { if (box) box.hidden = true; return; }
+  box.innerHTML = jours.map(({ date, n }) => {
+    const [label, num] = fmtDate(date);
+    return `<button class="sheet-day${date === state.date ? ' active' : ''}" data-date="${date}">
+      <small>${esc(label)}</small><span>${esc(num)}</span><i>${plural(n, 'séance')}</i></button>`;
+  }).join('');
+}
+
 function render() {
   if (!state.day) return;
   state.expanded ||= new Set();
@@ -782,6 +985,8 @@ function render() {
   $('#count').textContent = shows.length
     ? `${plural(shows.length, 'séance')} · ${plural(entries.length, state.view === 'films' ? 'film' : 'cinéma')}`
     : '';
+  renderHero(shows, entries);
+  renderWlWeek().catch(() => {});
 
   if (!entries.length) {
     const [, num] = fmtDate(state.date);
@@ -798,16 +1003,19 @@ function render() {
       ${state.filters.q.trim() ? `<p class="muted small" id="crossDate">Recherche sur les autres dates…</p>` : ''}
     </div>`;
     if (state.filters.q.trim()) suggestOtherDates();
+    renderFilmSheet();
     return;
   }
 
   const slice = entries.slice(0, state.limit);
-  const html = slice.map(([key, sub]) => {
+  const items = slice.map(([key, sub]) => {
     const total = [...sub.values()].reduce((n, a) => n + a.length, 0);
     return state.view === 'films'
-      ? movieCard(state.day.movies[key], sub, total)
-      : theaterCard(state.byId.get(key), sub, total);
+      ? filmTile(state.day.movies[key], sub, total)
+      : theaterTile(state.byId.get(key), sub, total);
   }).join('');
+  const html = `<div class="${state.view === 'films' ? 'film-grid' : 'cine-grid'}">${items}</div>`;
+  renderFilmSheet();
 
   $('#results').innerHTML = sparseNotice() + html +
     (entries.length > state.limit ? `<button class="btn ghost" id="loadMore">Afficher ${Math.min(PAGE, entries.length - state.limit)} de plus (${entries.length - state.limit} restants)</button>` : '');
@@ -922,6 +1130,7 @@ $('#slots').addEventListener('click', (e) => {
 });
 
 $('#view').addEventListener('click', (e) => {
+  openFilm(null);
   const b = e.target.closest('[data-view]');
   if (!b) return;
   state.view = b.dataset.view;
@@ -1013,6 +1222,7 @@ $('#cartBody').addEventListener('click', (e) => {
  * au lancement, avec le chemin le plus court pour la remettre a jour.
  */
 function rappelerWatchlist() {
+  if (state.lbStatus?.pseudo) return; // relue toute seule : rien à rappeler
   const age = watchlistAgeDays();
   if (age === null || age < 3) return;
   const pseudo = load('cineidf.lbUser', null);
@@ -1055,18 +1265,25 @@ function lireWatchlistDansAdresse() {
  */
 async function recupererWatchlistPoussee() {
   const data = await getJSON('/api/watchlist/pushed');
-  if (!data?.films?.length) return false;
+  const statut = await getJSON('/api/watchlist/status');
+  if (statut) { state.lbStatus = statut; renderWatchlist(); }
+  // Une synchro auto peut légitimement ramener une liste vide.
+  if (!data?.films || (!data.films.length && data.source !== 'auto')) return false;
   if (state.wlImportedAt && Date.parse(data.recuLe) <= Date.parse(state.wlImportedAt)) return true;
 
+  const avant = state.watchlist?.length ?? null;
   if (data.pseudo) save('cineidf.lbUser', data.pseudo);
-  state.watchlist = data.films.map((f) => ({ title: f.title, year: f.year }));
+  state.watchlist = data.films.map((f) => ({ title: f.title, year: f.year, slug: f.slug || null }));
   state.wlImportedAt = data.recuLe;
   save('cineidf.watchlist', state.watchlist);
   save('cineidf.wlDate', state.wlImportedAt);
   state.wlHits = watchlistMatches(state.day);
   renderWatchlist();
   render();
-  setStatus('ok', `Watchlist reçue depuis Letterboxd — ${plural(state.watchlist.length, 'film')}, ${state.wlHits.size} à l'affiche`, { autoHide: 8000 });
+  // Synchro auto silencieuse si rien n'a bougé ; sinon, on le dit.
+  if (!(data.source === 'auto' && avant === state.watchlist.length)) {
+    setStatus('ok', `Watchlist Letterboxd à jour — ${plural(state.watchlist.length, 'film')}, ${state.wlHits.size} à l'affiche`, { autoHide: 6000 });
+  }
   return true;
 }
 
@@ -1182,32 +1399,188 @@ $('#wlPerso').addEventListener('click', (e) => {
 
 /* ------------------------------------------------------- watchlist (UI) */
 
-function renderWatchlist() {
-  const active = Boolean(state.watchlist?.length) || state.wlLocal.size > 0 || state.wlPerso.length > 0;
-  $('#wlEmpty').hidden = active;
-  $('#wlLoaded').hidden = !active;
-  $('#onlyWatchlist').checked = state.filters.onlyWatchlist;
+/**
+ * Les films de ta watchlist qui passent dans les jours récupérés, avec les
+ * jours concernés. Mêmes critères de lieu que la liste (carte UGC, départements,
+ * favoris…). Recalculé seulement quand la watchlist, les données ou ces
+ * critères changent.
+ */
+let wlWeekKey = '';
+let wlWeekToken = 0;
+async function renderWlWeek() {
+  const f = state.filters;
+  const cle = JSON.stringify([state.index?.generatedAt, state.index?.days?.map((d) => d.shows),
+    state.watchlist?.length, state.wlLocal.size, state.wlPerso.length, f.ugcOnly, f.onlyFav, f.depts, f.city, f.theater, f.version,
+    Object.keys(state.ratings).length, todayStr()]);
+  if (cle === wlWeekKey) return;
+  wlWeekKey = cle;
+  const token = ++wlWeekToken;
+  const box = $('#wlWeek');
+  const aVoir = Boolean(state.watchlist?.length) || state.wlLocal.size > 0 || state.wlPerso.length > 0;
+  if (!aVoir || !state.index) { box.hidden = true; return; }
 
-  if (!active) {
-    state.filters.onlyWatchlist = false; // filtre sans objet
-    return;
+  const garde = (x) => {
+    const t = state.byId.get(x.t);
+    if (!t) return false;
+    if (f.ugcOnly && !t.ugc) return false;
+    if (f.onlyFav && !state.favs.has(x.t)) return false;
+    if (f.depts.length && !f.depts.includes(t.dept)) return false;
+    if (f.city && t.city !== f.city) return false;
+    if (f.theater && x.t !== f.theater) return false;
+    if (f.version === 'VO' && x.v === 'VF') return false;
+    if (f.version === 'VF' && x.v !== 'VF') return false;
+    return true;
+  };
+  const auj = todayStr();
+  const maintenant = slot(nowHHMM());
+  const films = new Map(); // id -> { m, jours: [date] }
+  for (const d of state.index.days) {
+    const day = await loadDay(d.date);
+    if (token !== wlWeekToken) return; // recalcul relancé entre-temps
+    if (!day) continue;
+    const ids = watchlistMatches(day);
+    if (!ids.size) continue;
+    const presents = new Set(day.shows
+      .filter((x) => ids.has(x.m) && garde(x) && !(d.date === auj && slot(x.s) < maintenant))
+      .map((x) => x.m));
+    for (const id of presents) {
+      if (!films.has(id)) films.set(id, { m: day.movies[id], jours: [] });
+      films.get(id).jours.push(d.date);
+    }
   }
+  if (!films.size) { box.hidden = true; return; }
 
-  const total = (state.watchlist?.length || 0) + state.wlLocal.size + state.wlPerso.length;
+  const liste = [...films.values()].sort((a, b) => a.jours[0].localeCompare(b.jours[0]) || a.m.title.localeCompare(b.m.title, 'fr'));
+  $('#wlWeekRow').innerHTML = liste.map(({ m, jours }) => {
+    const quand = jours.map((j) => (j === auj ? "auj." : fmtDate(j)[0])).join(', ');
+    const vignette = thumb(m.poster);
+    return `<button class="wl-week-item" data-wl-film="${m.id}" data-wl-date="${jours[0]}" title="Voir les séances">
+      <span class="wl-week-poster">${vignette ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(vignette)}" alt="">` : ''}</span>
+      <span class="wl-week-name">${esc(m.title)}</span>
+      <span class="wl-week-days">${esc(quand)}</span>
+    </button>`;
+  }).join('');
+  $('#wlWeek').querySelector('.wl-week-title').textContent =
+    `Ta watchlist cette semaine · ${plural(liste.length, 'film')}`;
+  box.hidden = false;
+}
+
+$('#wlWeekRow').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-wl-film]');
+  if (!b) return;
+  if (state.view !== 'films') {
+    state.view = 'films';
+    for (const x of document.querySelectorAll('#view .chip')) x.classList.toggle('active', x.dataset.view === 'films');
+  }
+  if (b.dataset.wlDate !== state.date) await selectDate(b.dataset.wlDate);
+  openFilm(b.dataset.wlFilm, 'film');
+});
+
+/** « à l'instant », « il y a 5 min », « il y a 2 h », « le 12 oct ». */
+function ilYa(iso) {
+  const min = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  if (min < 24 * 60) return `il y a ${Math.round(min / 60)} h`;
+  return `le ${new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }).replace('.', '')}`;
+}
+
+function renderWatchlist() {
+  const lb = state.lbStatus;
+  const lie = Boolean(lb?.pseudo);
+  const active = Boolean(state.watchlist?.length) || state.wlLocal.size > 0 || state.wlPerso.length > 0;
+  $('#lbSetup').hidden = lie;
+  $('#lbLinked').hidden = !lie;
+  $('#lbChange').hidden = !lie;
+  $('#wlEmpty').hidden = lie;                 // l'import de fichier ne sert qu'en secours
+  $('#wlLoaded').hidden = !active;
+  $('#wlFileBox').hidden = lie || !state.watchlist?.length;
+  $('#onlyWatchlist').checked = state.filters.onlyWatchlist;
+  if (!active) state.filters.onlyWatchlist = false; // filtre sans objet
+
   const n = state.wlHits.size;
   // « à l'affiche » est invariable : pas de plural() ici.
-  $('#wlLabel').textContent = `${plural(total, 'film')} · ${n ? `${n} à l’affiche` : 'aucun à l’affiche'}`;
+  const affiche = n ? `${n} à l’affiche` : 'aucun à l’affiche';
+  if (lie) {
+    $('#lbLabel').textContent = `${lb.pseudo} · ${plural(state.watchlist?.length || 0, 'film')} · ${affiche}`;
+    const etat = $('#lbState');
+    etat.classList.toggle('error', lb.ok === false && !state.lbSyncing);
+    etat.textContent = state.lbSyncing
+      ? 'Synchronisation…'
+      : lb.ok === false
+        ? `Dernier essai raté (${ilYa(lb.at)}) : ${lb.error}`
+        : lb.at ? `Synchronisée ${ilYa(lb.at)} · relue toute seule à chaque ouverture` : '';
+  } else if (state.watchlist?.length) {
+    const total = state.watchlist.length + state.wlLocal.size + state.wlPerso.length;
+    $('#wlLabel').textContent = `Fichier importé · ${plural(total, 'film')} · ${affiche}`;
+  }
 
-  // Une watchlist Letterboxd vieillit : on le signale sans être pénible.
+  // Ancien import par fichier : il vieillit, on le signale sans être pénible.
   const age = watchlistAgeDays();
   const rappel = $('#wlAge');
-  if (age !== null && age >= 14) {
+  if (!lie && state.watchlist?.length && age !== null && age >= 14) {
     rappel.hidden = false;
-    rappel.textContent = `Import Letterboxd d’il y a ${age} jours — pense à le refaire si ta watchlist a bougé.`;
+    rappel.textContent = `Fichier importé il y a ${age} jours. Relie plutôt ton pseudo ci-dessus : plus rien à refaire.`;
   } else {
     rappel.hidden = true;
   }
 }
+
+/** Pseudo tapé, ou adresse de profil collée (« letterboxd.com/pseudo/… »). */
+function lirePseudo(saisie) {
+  const t = saisie.trim();
+  const url = t.match(/letterboxd\.com\/([A-Za-z0-9_-]+)/i);
+  return (url ? url[1] : t.replace(/^@/, '')).trim();
+}
+
+async function relierLetterboxd() {
+  const pseudo = lirePseudo($('#lbUser').value);
+  const hint = $('#lbSetupHint');
+  if (!pseudo) { $('#lbUser').focus(); return; }
+  $('#lbUserBtn').disabled = true;
+  hint.classList.remove('error');
+  hint.textContent = 'Lecture de ta watchlist…';
+  try {
+    const res = await fetch('/api/watchlist/user', { method: 'POST', body: JSON.stringify({ pseudo }) });
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.error || 'échec');
+    state.lbStatus = r;
+    await recupererWatchlistPoussee();
+    renderWatchlist();
+  } catch (err) {
+    hint.classList.add('error');
+    hint.textContent = `Impossible de lire cette watchlist : ${err.message}.`;
+  } finally {
+    $('#lbUserBtn').disabled = false;
+  }
+}
+
+async function synchroniserLetterboxd() {
+  state.lbSyncing = true;
+  $('#lbSync').disabled = true;
+  renderWatchlist();
+  try {
+    const res = await fetch('/api/watchlist/sync', { method: 'POST' });
+    state.lbStatus = await res.json().catch(() => state.lbStatus);
+  } catch { /* serveur injoignable : l'état reste affiché */ }
+  state.lbSyncing = false;
+  $('#lbSync').disabled = false;
+  await recupererWatchlistPoussee();
+  renderWatchlist();
+}
+
+$('#lbUserBtn').addEventListener('click', relierLetterboxd);
+$('#lbUser').addEventListener('keydown', (e) => { if (e.key === 'Enter') relierLetterboxd(); });
+$('#lbSync').addEventListener('click', synchroniserLetterboxd);
+$('#lbChange').addEventListener('click', async () => {
+  const ancien = state.lbStatus?.pseudo || '';
+  await fetch('/api/watchlist/user', { method: 'POST', body: JSON.stringify({ pseudo: null }) }).catch(() => {});
+  state.lbStatus = { pseudo: null };
+  renderWatchlist();
+  $('#lbUser').value = ancien;
+  $('#lbUser').focus();
+  $('#lbUser').select();
+});
 
 $('#wlFile').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
@@ -1320,7 +1693,12 @@ $('#radius').addEventListener('change', (e) => {
   onFilterChange();
 });
 
-$('#results').addEventListener('click', (e) => {
+function onResultsClick(e) {
+  const tile = e.target.closest('[data-film]');
+  if (tile) return openFilm(tile.dataset.film, 'film');
+  const cineTile = e.target.closest('[data-cine]');
+  if (cineTile) return openFilm(cineTile.dataset.cine, 'theater');
+
   const jump = e.target.closest('[data-date]');
   if (jump) return selectDate(jump.dataset.date);
 
@@ -1368,7 +1746,10 @@ $('#results').addEventListener('click', (e) => {
     state.limit += PAGE;
     render();
   }
-});
+}
+$('#results').addEventListener('click', onResultsClick);
+$('#filmSheetBody').addEventListener('click', onResultsClick);
+for (const el of document.querySelectorAll('[data-close-film]')) el.addEventListener('click', () => openFilm(null));
 
 /* ------------------------------------------------------------ mise a jour */
 
@@ -1549,9 +1930,21 @@ function reportLastResult(last) {
   setStatus('error', `Échec de la mise à jour (${quand}) — ${message}`, { retry: true, details });
 }
 
+/**
+ * « 104 cinémas · à jour à 19h40 » : le nombre de salles réellement couvertes
+ * (périmètre UGC ou toutes), et l'heure de mise à jour, avec le jour si ce
+ * n'est pas aujourd'hui.
+ */
 function metaText() {
   const gen = new Date(state.index.generatedAt);
-  return `${state.index.theaterCount} cinémas · maj ${gen.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+  const salles = state.theaters?.length
+    ? state.theaters.filter((t) => !state.filters.ugcOnly || t.ugc).length
+    : state.index.theaterCount;
+  const heure = gen.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', 'h');
+  const jour = gen.toDateString() === new Date().toDateString()
+    ? ''
+    : ` le ${gen.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }).replace('.', '')}`;
+  return `${salles} cinémas · à jour${jour} à ${heure}` + (state.index.partial ? ' · récupération en cours' : '');
 }
 
 /** Recharge index + journée courante sans perdre filtres, tri ni position. */
@@ -1593,5 +1986,65 @@ setInterval(() => { if (!watching) watchRefresh(); }, 20000);
 // Le marque-page peut pousser une watchlist pendant que l'app est ouverte :
 // on la reprend sans attendre un rechargement.
 setInterval(() => { recupererWatchlistPoussee().catch(() => {}); }, 15000);
+
+/**
+ * Raccourcis clavier : « / » va à la recherche (comme sur la plupart des
+ * sites), Échap ferme le panier ou, dans la recherche, la vide.
+ */
+addEventListener('keydown', (e) => {
+  const enSaisie = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
+  if (e.key === '/' && !enSaisie && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    $('#q').focus();
+    $('#q').select();
+  } else if (e.key === 'Escape') {
+    if (!$('#filmSheet').hidden) {
+      openFilm(null);
+    } else if (!$('#cart').hidden) {
+      state.cartOpen = false;
+      $('#cart').hidden = true;
+    } else if (document.activeElement === $('#q') && $('#q').value) {
+      $('#q').value = '';
+      $('#q').dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+});
+
+/**
+ * Panneau des filtres : il reste fixe à l'écran pendant qu'on fait défiler les
+ * séances, avec son propre défilement. Sa position et sa hauteur dépendent de
+ * la hauteur réelle de l'en-tête (barre des dates qui passe sur deux lignes,
+ * barre d'état bleue affichée ou non) : on les calcule au lieu de les deviner,
+ * sinon le bas du panneau sortait de l'écran ou son haut passait sous la barre.
+ */
+function fitFilters() {
+  const f = $('#filters');
+  const topbar = document.querySelector('.topbar');
+  const status = $('#status');
+  // + la bande de pellicule dessinée sous la barre (pseudo-élément ::after)
+  const strip = parseFloat(getComputedStyle(topbar, '::after').height) || 0;
+  const barH = topbar.getBoundingClientRect().height + strip;
+  status.style.top = `${Math.round(barH)}px`;
+  if (getComputedStyle(f).position !== 'sticky') {
+    f.style.maxHeight = '';
+    return;
+  }
+  const head = barH + (status.hidden ? 0 : status.getBoundingClientRect().height);
+  const top = Math.round(head + 12);
+  f.style.top = `${top}px`;
+  const visibleTop = Math.max(top, f.getBoundingClientRect().top);
+  f.style.maxHeight = `${Math.max(200, Math.floor(innerHeight - visibleTop - 12))}px`;
+}
+let fitQueued = false;
+const queueFit = () => {
+  if (fitQueued) return;
+  fitQueued = true;
+  requestAnimationFrame(() => { fitQueued = false; fitFilters(); });
+};
+addEventListener('scroll', queueFit, { passive: true });
+addEventListener('resize', queueFit);
+new ResizeObserver(queueFit).observe(document.querySelector('.topbar'));
+new ResizeObserver(queueFit).observe($('#status'));
+queueFit();
 
 boot();

@@ -10,6 +10,7 @@ import zlib from 'node:zlib';
 import { spawn } from 'node:child_process';
 import { trouverExport, lireWatchlist } from './import-watchlist.js';
 import { staleDays } from './freshness.js';
+import { syncWatchlist, etatSync, definirPseudo, pseudoValide } from './letterboxd-watchlist.js';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -428,6 +429,32 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Synchro automatique de la watchlist Letterboxd : etat, pseudo, relance.
+  if (route === '/api/watchlist/status') {
+    return send(req, res, 200, JSON.stringify({ ...etatSync(), running: watchlistRunning }));
+  }
+  if (route === '/api/watchlist/user' && req.method === 'POST') {
+    let body = '';
+    for await (const chunk of req) { body += chunk; if (body.length > 2000) break; }
+    let pseudo = null;
+    try { pseudo = JSON.parse(body).pseudo; } catch { /* corps illisible */ }
+    if (pseudo === null || pseudo === '') {
+      definirPseudo(null);
+      return send(req, res, 200, JSON.stringify(etatSync()));
+    }
+    if (!pseudoValide(pseudo)) return send(req, res, 400, JSON.stringify({ error: 'pseudo invalide' }));
+    try {
+      const r = await syncWatchlist(String(pseudo).trim());
+      return send(req, res, 200, JSON.stringify(r));
+    } catch (err) {
+      return send(req, res, 400, JSON.stringify({ error: err.message }));
+    }
+  }
+  if (route === '/api/watchlist/sync' && req.method === 'POST') {
+    const r = await autoWatchlist({ force: true });
+    return send(req, res, r?.ok === false ? 502 : 200, JSON.stringify(r ?? etatSync()));
+  }
+
   // Watchlist recue par le marque-page, relue par l'app.
   if (route === '/api/watchlist/pushed') {
     const f = path.join(DATA, 'watchlist.json');
@@ -539,6 +566,30 @@ const server = http.createServer(async (req, res) => {
 });
 
 /**
+ * Watchlist Letterboxd : relue a l'ouverture, puis toutes les 30 min tant que
+ * l'app est ouverte. Quelques requetes vers Letterboxd (28 films par page),
+ * jamais deux synchros en meme temps.
+ */
+let watchlistRunning = false;
+async function autoWatchlist({ force = false } = {}) {
+  const etat = etatSync();
+  if (!etat.pseudo || watchlistRunning) return etat;
+  const age = etat.at ? Date.now() - Date.parse(etat.at) : Infinity;
+  if (!force && age < 30 * 60000) return etat;
+  watchlistRunning = true;
+  try {
+    const r = await syncWatchlist(etat.pseudo);
+    console.log(`Watchlist Letterboxd de ${r.pseudo} : ${r.count} films.`);
+    return r;
+  } catch (err) {
+    console.log(`Watchlist Letterboxd non relue : ${err.message}`);
+    return etatSync();
+  } finally {
+    watchlistRunning = false;
+  }
+}
+
+/**
  * Lance une mise a jour si un jour est perime. Jamais plus d'une tentative
  * toutes les 15 min (une heure apres un echec) : un blocage Cloudflare ne doit
  * pas se transformer en boucle de relances.
@@ -581,6 +632,7 @@ server.listen(PORT, HOST, () => {
   // L'app se tient a jour toute seule : au demarrage, puis tant qu'une fenetre
   // est ouverte, des qu'un jour depasse sa duree de fraicheur (freshness.js).
   autoRefresh('demarrage');
+  autoWatchlist();
 
   setInterval(() => {
     // Ecriture periodique : fait remonter les connexions mortes (fenetre fermee
@@ -595,7 +647,7 @@ server.listen(PORT, HOST, () => {
 
     // Ni pendant une recuperation (meme lancee en ligne de commande), ni tant
     // qu'une fenetre de l'app est ouverte.
-    if (liveClients.size > 0) autoRefresh('app ouverte');
+    if (liveClients.size > 0) { autoRefresh('app ouverte'); autoWatchlist(); }
     if (refresh.running || externalRefreshRunning() || liveClients.size > 0) {
       lastRequestAt = Date.now();
       return;
