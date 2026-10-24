@@ -80,20 +80,28 @@ function extraire(html) {
 
 async function page(pseudo, n) {
   const url = `https://letterboxd.com/${encodeURIComponent(pseudo)}/watchlist/${n > 1 ? `page/${n}/` : ''}`;
-  for (let essai = 1; essai <= 3; essai++) {
+  // 403 / 429 : la protection anti-robots de Letterboxd (Cloudflare) refuse
+  // parfois une requete au hasard quand elles s'enchainent. On patiente et on
+  // reessaie (vu le 16/10/2026 : refus isoles, la requete suivante passe).
+  let dernier = null;
+  for (let essai = 1; essai <= 5; essai++) {
     try {
       const res = await fetch(url, {
         headers: { 'User-Agent': UA, 'Accept-Language': 'en;q=0.9' },
         signal: AbortSignal.timeout(20000),
       });
       if (res.status === 404) return { status: 404, html: '' };
-      if (res.status === 429 || res.status >= 500) { await sleep(3000 * essai); continue; }
+      if (res.status === 403 || res.status === 429 || res.status >= 500) {
+        dernier = res.status;
+        await sleep(4000 * essai);
+        continue;
+      }
       return { status: res.status, html: await res.text() };
     } catch {
       await sleep(1500 * essai);
     }
   }
-  throw new Error('Letterboxd ne répond pas');
+  throw new Error(dernier ? `Letterboxd refuse temporairement l'accès (${dernier}), nouvel essai plus tard` : 'Letterboxd ne répond pas');
 }
 
 /**
@@ -101,7 +109,7 @@ async function page(pseudo, n) {
  * (meme format que l'ancien marque-page : l'interface la reprend telle quelle).
  * N'ecrit rien si la lecture est incomplete : une coupure ne vide jamais la liste.
  */
-export async function syncWatchlist(pseudoDemande) {
+export async function syncWatchlist(pseudoDemande, { ecrire = true } = {}) {
   const etat = etatSync();
   const pseudo = (pseudoDemande || etat.pseudo || '').trim();
   if (!pseudoValide(pseudo)) throw new Error('pseudo Letterboxd manquant ou invalide');
@@ -109,8 +117,13 @@ export async function syncWatchlist(pseudoDemande) {
   const at = new Date().toISOString();
   try {
     const films = [];
+    let annonce = null; // nombre de films affiché par Letterboxd
     for (let n = 1; n <= MAX_PAGES; n++) {
       const { status, html } = await page(pseudo, n);
+      if (n === 1) {
+        const c = html.match(/(\d[\d,.\s]*)&nbsp;films?\b/);
+        if (c) annonce = Number(c[1].replace(/\D/g, ''));
+      }
       if (n === 1 && status === 404) throw new Error(`aucun compte Letterboxd « ${pseudo} »`);
       if (status !== 200) throw new Error(`Letterboxd a répondu ${status}`);
       const lot = extraire(html);
@@ -127,12 +140,21 @@ export async function syncWatchlist(pseudoDemande) {
     const vus = new Set();
     const uniques = films.filter((f) => (vus.has(f.slug) ? false : vus.add(f.slug)));
 
+    // Garde-fou : on doit retrouver le compteur affiché par Letterboxd (à
+    // quelques films près si la liste bouge pendant la lecture). Sinon, une
+    // page a manqué : on n'enregistre rien.
+    if (annonce != null && Math.abs(uniques.length - annonce) > Math.max(2, annonce * 0.02)) {
+      throw new Error(`lecture incomplète (${uniques.length} films lus sur ${annonce}), nouvel essai plus tard`);
+    }
+    if (!ecrire) return { pseudo, at, ok: true, error: null, count: uniques.length, annonce, films: uniques };
+
     fs.mkdirSync(DATA, { recursive: true });
     fs.writeFileSync(WATCHLIST, JSON.stringify({ recuLe: at, pseudo, source: 'auto', films: uniques }, null, 1));
     const fin = { pseudo, at, ok: true, error: null, count: uniques.length };
     ecrireEtat(fin);
     return fin;
   } catch (err) {
+    if (!ecrire) throw err;
     // Un nouveau pseudo qui echoue (faute de frappe…) ne remplace pas celui qui
     // marchait : on ne note l'echec que pour le pseudo deja enregistre.
     if (!etat.pseudo || pseudo === etat.pseudo) ecrireEtat({ ...etat, pseudo, at, ok: false, error: err.message });
@@ -141,7 +163,8 @@ export async function syncWatchlist(pseudoDemande) {
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  syncWatchlist(process.argv[2])
-    .then((r) => console.log(`watchlist de ${r.pseudo} : ${r.count} films`))
+  // --test : lit sans rien enregistrer (pour essayer un autre compte)
+  syncWatchlist(process.argv[2], { ecrire: !process.argv.includes('--test') })
+    .then((r) => console.log(`watchlist de ${r.pseudo} : ${r.count} films${r.annonce != null ? ` (Letterboxd en annonce ${r.annonce})` : ''}`))
     .catch((e) => { console.error(e.message); process.exitCode = 1; });
 }

@@ -1,75 +1,70 @@
 # Ciné IDF — installation
 
-Toutes les séances de cinéma d'Île-de-France, en local sur ta machine.
-Aucun compte, aucune clé d'API, aucune dépendance à installer.
+Toutes les séances de cinéma d'Île-de-France, sur ton PC. Aucun compte à créer, rien à
+payer, rien n'est envoyé nulle part.
 
-## 1. Node.js
+## Sur Windows : un double-clic
 
-Il te faut Node.js 20 ou plus : <https://nodejs.org> (version LTS, installation par défaut).
+1. **Décompresse** `cine-idf.zip` où tu veux (Bureau, Documents…).
+2. Dans le dossier `cine-idf`, **double-clique sur `Installer Cine IDF.cmd`**.
+   - S'il manque Node.js (le moteur de l'app), il te propose de l'installer : réponds **O**.
+     Windows peut demander une autorisation, c'est normal.
+   - Il crée le raccourci **Ciné IDF** sur ton Bureau et ouvre l'app.
+3. C'est fini. Ensuite, double-clic sur **Ciné IDF** sur le Bureau.
 
-Pour vérifier, dans un terminal :
+> Si Windows affiche « Windows a protégé votre ordinateur » au premier double-clic :
+> clique **Informations complémentaires** puis **Exécuter quand même**. Le fichier
+> est un simple script lisible avec le Bloc-notes.
 
-```bash
-node --version
-```
+**Le premier lancement prend environ 15 minutes** : l'app récupère toute seule les
+séances de la semaine. Tu peux t'en servir pendant ce temps, elle se remplit au fur et
+à mesure. Ensuite, elle se tient à jour seule, en arrière-plan.
 
-## 2. Poser le dossier
+## À régler une fois, dans le panneau de gauche
 
-Décompresse `cine-idf` où tu veux — Bureau, Documents, peu importe.
+- **Ta watchlist Letterboxd** : tape ton pseudo et clique **Relier**. Elle sera relue
+  toute seule à chaque ouverture, et une bande « Ta watchlist cette semaine » te montre
+  les films à voir qui passent. Ta watchlist doit être publique sur Letterboxd (c'est
+  le réglage par défaut).
+- **Pas de carte UGC Illimité ?** Décoche « Uniquement la carte UGC Illimité » pour voir
+  les 362 cinémas d'Île-de-France (le premier remplissage prend alors ~45 min).
+- **Autour de moi** : « Ma position » ou une adresse, pour trier par distance.
 
-## 3. Première récupération
+## Sur Mac : un double-clic aussi
 
-Dans le dossier, ouvre un terminal et lance :
+1. **Décompresse** `cine-idf.zip` (double-clic dessus) et range le dossier `cine-idf`
+   où tu veux, par exemple dans Documents.
+2. Dans le dossier, **ouvre `Installer Cine IDF.command`**.
+   - Au premier essai, macOS bloque le fichier (« développeur non identifié ») :
+     va dans **Réglages Système › Confidentialité et sécurité**, tout en bas clique
+     **Ouvrir quand même**, puis confirme. Sur les macOS plus anciens : clic droit sur
+     le fichier › **Ouvrir** › **Ouvrir**. C'est à faire une seule fois.
+   - S'il manque Node.js : avec Homebrew, il propose de l'installer (réponds **o**) ;
+     sinon il ouvre la page de téléchargement : prends la version LTS pour macOS,
+     installe-la, puis appuie sur Entrée dans la fenêtre.
+   - Il crée l'app **Ciné IDF** sur ton Bureau, avec son icône, et l'ouvre.
+3. Ensuite, double-clic sur **Ciné IDF** sur le Bureau.
 
-```bash
-npm run refresh
-```
+L'app s'ouvre dans sa propre fenêtre si tu as Chrome, Edge ou Brave, sinon dans ton
+navigateur habituel (Safari marche aussi).
 
-Ça interroge AlloCiné pour les 103 salles où la carte UGC Illimité est acceptée,
-sur 5 jours. **Compte environ 15 minutes.** C'est long une seule fois : ensuite
-l'app se met à jour toute seule et en arrière-plan.
+> Ne déplace plus le dossier `cine-idf` après l'installation : l'app du Bureau va le
+> chercher à cet endroit. Si tu le déplaces, relance simplement l'installeur.
 
-Tu peux déjà ouvrir l'app pendant ce temps, elle se remplit au fur et à mesure.
+## Sur Linux
 
-> Pour avoir les 362 salles d'Île-de-France au lieu des 103 : décoche
-> « Uniquement les cinémas acceptés » dans l'app, ou lance `node src/scrape.js --all`.
-> Compter ~45 min dans ce cas.
-
-## 4. Lancer
-
-```bash
-npm start
-```
-
-puis <http://localhost:4173>
-
-## 5. Raccourci sur le bureau (facultatif)
-
-Pour ouvrir l'app en double-clic, dans sa propre fenêtre, avec son icône :
-
-```powershell
-$root = "$PWD"
-$nom = "Cin" + [char]0xE9 + " IDF.lnk"
-$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) $nom))
-$s.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$s.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\start.ps1`""
-$s.WorkingDirectory = $root; $s.IconLocation = "$root\assets\cine-idf.ico"; $s.WindowStyle = 7
-$s.Save()
-```
-
-À lancer depuis le dossier `cine-idf`, dans PowerShell.
-
-Sur Mac ou Linux, `npm start` suffit — le raccourci est spécifique à Windows.
+Installe Node.js 20 ou plus, puis lance `./start.sh` dans le dossier (ou
+`node src/server.js` et ouvre <http://localhost:4173>).
 
 ## Bon à savoir
 
-- Les données arrivent d'AlloCiné, avec un débit volontairement bas pour ne pas
-  se faire bloquer. Si une récupération s'interrompt, relancer `npm run refresh`
-  reprend exactement où ça s'était arrêté.
-- L'app n'écoute que sur ta machine. Rien n'est envoyé nulle part.
-- Le dossier `data/` est créé au premier lancement. Il est propre à toi.
-- `README.md` détaille le reste : watchlist Letterboxd, notes, mode téléphone,
-  périmètre UGC Illimité.
+- L'app ne tourne que sur ton PC et n'écoute que lui. Elle s'arrête toute seule
+  30 minutes après la fermeture de sa fenêtre.
+- Le dossier `data/` est créé au premier lancement : ce sont tes données (séances,
+  favoris, watchlist). Ne le partage pas.
+- Si quelque chose bloque, la barre en haut de l'app dit ce qui se passe, avec un
+  bouton **Réessayer**.
+- `README.md` détaille tout le reste.
 
-**Usage personnel.** Les données appartiennent à AlloCiné et aux exploitants :
-ne redistribue pas le contenu de `data/`.
+**Usage personnel.** Les séances viennent d'AlloCiné : chacun récupère les siennes sur
+son PC, ne redistribue pas le contenu de `data/`.
