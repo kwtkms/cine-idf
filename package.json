@@ -12,7 +12,8 @@
     "geocode": "node src/geocode.js",
     "ugc": "node src/ugc.js",
     "notes": "node src/letterboxd.js",
-    "verify": "node src/verify.js"
+    "verify": "node src/verify.js",
+    "zip": "node src/make-zip.js"
   },
   "engines": {
     "node": ">=20"

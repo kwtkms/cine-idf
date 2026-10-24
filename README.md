@@ -11,6 +11,18 @@ Aucune dépendance npm, aucune clé d'API.
 
 Double-clic sur **Ciné IDF** sur le bureau. C'est tout.
 
+**Sur un autre PC** (un pote) : décompresser le zip et double-cliquer sur
+`Installer Cine IDF.cmd`. Il vérifie Node.js (et propose de l'installer avec winget),
+crée le raccourci du Bureau et lance l'app, qui fait sa première récupération seule.
+Aucune commande à taper. Testé le 16/10/2026 sur une copie neuve : liste des 362 salles,
+géolocalisation et carte UGC en moins d'une minute, puis les séances au fil de l'eau.
+Sur **Mac**, même principe avec `Installer Cine IDF.command` : il crée une app « Ciné IDF »
+sur le Bureau (AppleScript + `start.sh`, avec l'icône). Le zip se fabrique avec
+**`npm run zip`** (`src/make-zip.js`), qui sort deux zips — `cine-idf-windows.zip` et
+`cine-idf-mac.zip`, chacun sans les fichiers de l'autre système. Il exclut `data/` et garde la permission
+« exécutable » des scripts Mac, que l'Explorateur Windows perdrait.
+Détails pour la personne qui reçoit : `INSTALLATION.md`.
+
 Le raccourci démarre le serveur local en tâche de fond et ouvre l'app dans sa propre
 fenêtre (sans barre d'adresse ni onglets), avec sa propre icône dans la barre des tâches.
 
@@ -249,6 +261,7 @@ film pas encore à l'affiche : il sera signalé dès qu'une séance existe.
 | `node src/scrape.js --theaters-only` | met à jour la seule liste des salles |
 | `npm start` | serveur seul (port 4173, ou `PORT=8080 npm start`) |
 | `node src/letterboxd-watchlist.js <pseudo>` | relit la watchlist Letterboxd publique |
+| `npm run zip` | fabrique `cine-idf-windows.zip` et `cine-idf-mac.zip` sur le Bureau (sans tes données) |
 | `npm run verify` | compare séance par séance l'app et AlloCiné, aujourd'hui et demain (~10 min ; `-- --days=5` pour tout) |
 | `npm run calibrate` | remesure le débit toléré par AlloCiné (~6 min) |
 | `npm run geocode` | (re)calcule les coordonnées des salles (`--force` pour tout refaire) |
