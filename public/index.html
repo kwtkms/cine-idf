@@ -2,14 +2,21 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Ciné IDF</title>
 <meta name="description" content="Toutes les séances de cinéma d'Île-de-France." />
-<meta name="theme-color" content="#1b1418" media="(prefers-color-scheme: dark)" />
-<meta name="theme-color" content="#f5f0f2" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#1b1418" media="(prefers-color-scheme: dark), (max-width: 900px)" />
+<meta name="theme-color" content="#f5f0f2" media="(prefers-color-scheme: light) and (min-width: 901px)" />
 <link rel="icon" type="image/png" sizes="256x256" href="/icon.png" />
 <link rel="apple-touch-icon" href="/icon.png" />
+<!-- iPhone : appli plein écran depuis l'écran d'accueil, barre d'état sur le fond de l'app -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Ciné IDF" />
 <link rel="manifest" href="/manifest.webmanifest" />
+<!-- Le fond avant le chargement des styles : pas d'éclair blanc à l'ouverture -->
+<style>html { background: #1b1418; } @media (prefers-color-scheme: light) and (min-width: 901px) { html { background: #f5f0f2; } }</style>
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -17,6 +24,11 @@
 <header class="topbar">
   <div class="brand">Ciné IDF</div>
   <nav class="dates" id="dates" aria-label="Jour"></nav>
+  <label class="searchbar">
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+    <input type="search" id="q" placeholder="Film, cinéma, acteur…" aria-label="Recherche" title="Raccourci : touche /" enterkeyhint="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+    <button type="button" class="search-clear" id="qClear" aria-label="Effacer la recherche" hidden>✕</button>
+  </label>
   <div class="topbar-right">
     <span class="meta" id="meta"></span>
     <button class="btn" id="refreshBtn" title="Relire toutes les séances sur AlloCiné">Mettre à jour</button>
@@ -39,16 +51,15 @@
 
 <div class="layout">
   <aside class="filters" id="filters">
-    <button class="filters-toggle btn" id="filtersToggle">Filtres</button>
+    <!-- Sur téléphone, les filtres sont un écran à part : en-tête et bouton de sortie -->
+    <header class="filters-head">
+      <strong>Filtres</strong>
+      <button class="fav" id="filtersClose" title="Fermer" aria-label="Fermer">✕</button>
+    </header>
     <div class="filters-body" id="filtersBody">
 
       <!-- Ce qu'on cherche -->
       <div class="fgroup">
-        <label class="field">
-          <span>Recherche</span>
-          <input type="search" id="q" placeholder="Film, cinéma, réalisateur, acteur…" title="Raccourci : touche /" autocomplete="off" />
-        </label>
-
         <div class="field">
           <span>Horaire</span>
           <div class="chips" id="slots">
@@ -167,13 +178,33 @@
         </div>
       </div>
 
+      <!-- Sur mon iPhone (affiché seulement sur le PC) -->
+      <div class="fgroup" id="mobileBox" hidden>
+        <div class="field">
+          <span>Sur mon iPhone</span>
+          <div id="mobileSteps"></div>
+          <label class="check"><input type="checkbox" id="toujoursActif" /> Garder Ciné IDF allumé (démarre avec Windows)</label>
+          <p class="hint" id="mobileHint"></p>
+        </div>
+      </div>
+
       <!-- Affichage -->
       <div class="fgroup">
         <label class="check"><input type="checkbox" id="hidePast" checked /> Masquer les séances passées</label>
         <label class="check"><input type="checkbox" id="hidePreview" /> Masquer les avant-premières</label>
+        <label class="check"><input type="checkbox" id="minNote" /> Seulement les films notés 3,5 et plus</label>
         <button class="btn ghost small" id="reset">Réinitialiser les filtres</button>
       </div>
+
+      <!-- Sur téléphone, la mise à jour vit ici : la barre du haut reste à la recherche -->
+      <div class="fgroup only-phone">
+        <p class="hint" id="metaPhone"></p>
+        <button class="btn ghost small" id="refreshPhone">Mettre à jour</button>
+      </div>
     </div>
+    <footer class="filters-foot">
+      <button class="btn primary" id="filtersApply">Voir les séances</button>
+    </footer>
   </aside>
 
   <main class="content">
@@ -190,10 +221,22 @@
       <div class="segmented" id="view" role="group" aria-label="Affichage">
         <button class="chip active" data-view="films">Par film</button>
         <button class="chip" data-view="theaters">Par cinéma</button>
+        <button class="chip" data-view="hours">Par heure</button>
       </div>
-      <label class="inline">
-        Trier par
-        <select id="sort">
+      <!-- Raccourcis du téléphone, sur la même ligne que le tri -->
+      <div class="quick" id="quick">
+        <button class="chip" data-quick="soir">Soirée</button>
+        <button class="chip" data-quick="aprem">Après-midi</button>
+        <button class="chip" data-quick="vo">VO</button>
+        <button class="chip" data-quick="vf">VF</button>
+        <button class="chip" data-quick="note">★ 3,5 et plus</button>
+        <button class="chip" data-quick="proche">Près de moi</button>
+        <button class="chip" data-quick="fav">★ Mes cinémas</button>
+        <button class="chip" data-quick="avoir">À voir</button>
+      </div>
+      <label class="inline" id="sortBox">
+        <span class="sort-label">Trier par</span>
+        <select id="sort" aria-label="Trier par">
           <option value="popular">Le plus de séances</option>
           <option value="next">Prochaine séance</option>
           <option value="near">Le plus proche</option>
@@ -205,7 +248,13 @@
       </label>
       <div class="count" id="count"></div>
     </div>
-    <div id="results"></div>
+    <div id="results">
+      <!-- Affiches fantômes pendant le premier chargement -->
+      <div class="film-grid" aria-hidden="true">
+        <div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div>
+        <div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div>
+      </div>
+    </div>
   </main>
 </div>
 
@@ -228,8 +277,38 @@
     <button class="btn ghost small" id="cartClear">Vider</button>
     <button class="fav" id="cartClose" title="Fermer" aria-label="Fermer">✕</button>
   </header>
+  <p class="cart-sync" id="cartSync" aria-live="polite"></p>
   <div class="cart-body" id="cartBody"></div>
 </aside>
+
+<div class="toast" id="toast" role="status" hidden>
+  <span id="toastText"></span>
+  <button class="linklike" id="toastUndo">Annuler</button>
+</div>
+
+<!-- Navigation du téléphone -->
+<nav class="tabbar" id="tabbar" aria-label="Navigation">
+  <button class="tab" data-tab="films">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M8 4v16M16 4v16M3.5 9H8M3.5 15H8M16 9h4.5M16 15h4.5"/></svg>
+    <span>Films</span>
+  </button>
+  <button class="tab" data-tab="theaters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.4"/></svg>
+    <span>Cinémas</span>
+  </button>
+  <button class="tab" data-tab="hours">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.2l3.4 2"/></svg>
+    <span>Horaires</span>
+  </button>
+  <button class="tab" data-tab="cart">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M3.5 9V6.5h17V9a3 3 0 0 0 0 6v2.5h-17V15a3 3 0 0 0 0-6Z"/><path d="M14.5 6.5v2M14.5 11v2M14.5 15.5v2"/></svg>
+    <span>Mes séances</span><i class="tab-badge" id="tabCart" hidden></i>
+  </button>
+  <button class="tab" data-tab="filters">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    <span>Filtres</span><i class="tab-badge" id="tabFilters" hidden></i>
+  </button>
+</nav>
 
 <script src="/app.js"></script>
 </body>

@@ -43,6 +43,7 @@ function fichiers(dir, rel = '') {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (!rel && EXCLUS.has(e.name)) continue;
     if (e.name.endsWith('.tmp')) continue;
+    if (e.name === 'serveur-cache.vbs') continue; // genere sur ce PC (chemin local)
     const r = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) out.push(...fichiers(path.join(dir, e.name), r));
     else if (e.isFile()) out.push(r);

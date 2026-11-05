@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { trouverExport, lireWatchlist } from './import-watchlist.js';
 import { staleDays } from './freshness.js';
 import { syncWatchlist, etatSync, definirPseudo, pseudoValide } from './letterboxd-watchlist.js';
+import { reglages, etatTailscale, publierTailscale, definirToujoursActif, demarrageInstalle, ecrireLanceur } from './mobile.js';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,9 +64,84 @@ function readJsonSync(file) {
   return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
 }
 
-function send(req, res, status, body, type = 'application/json; charset=utf-8') {
+/** Ecriture tout-ou-rien : une coupure au mauvais moment ne doit pas abimer le fichier. */
+function ecrireAtomique(file, texte) {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, texte);
+  try {
+    fs.renameSync(tmp, file);
+  } catch {
+    // Fichier verrouille un instant (OneDrive, antivirus) : ecriture directe.
+    fs.writeFileSync(file, texte);
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+/** Le serveur tourne en continu et sans fenetre : ses erreurs vont dans un fichier. */
+function journal(err) {
+  try {
+    const f = path.join(DATA, 'server.log');
+    if (fs.existsSync(f) && fs.statSync(f).size > 200000) fs.rmSync(f);
+    fs.mkdirSync(DATA, { recursive: true });
+    fs.appendFileSync(f, `${new Date().toISOString()} ${err?.stack || err}\n`);
+  } catch { /* rien de plus a faire */ }
+}
+
+/**
+ * Fusion a trois : les changements de cet appareil depuis sa derniere synchro
+ * (`moi` par rapport a `base`) sont rejoues sur la liste commune. Une seance
+ * gardee sur l'iPhone dans le metro et une autre gardee sur le PC survivent
+ * toutes les deux, quelles que soient les horloges des appareils.
+ */
+function fusionTrois(commun, moi, base, cleDe) {
+  const clesMoi = new Set(moi.map(cleDe));
+  const clesBase = new Set(base.map(cleDe));
+  const retires = new Set([...clesBase].filter((k) => !clesMoi.has(k)));
+  const garde = commun.filter((x) => !retires.has(cleDe(x)));
+  const presents = new Set(garde.map(cleDe));
+  for (const x of moi) {
+    const k = cleDe(x);
+    if (!clesBase.has(k) && !presents.has(k)) { garde.push(x); presents.add(k); }
+  }
+  return garde;
+}
+
+/** Numero de version de l'app : change des qu'un fichier de public/ change. */
+function versionApp() {
+  let max = 0;
+  for (const f of fs.readdirSync(PUBLIC)) max = Math.max(max, fs.statSync(path.join(PUBLIC, f)).mtimeMs);
+  return String(Math.round(max));
+}
+
+/** Texte d'un champ .ics : caracteres reserves et retours a la ligne neutralises. */
+const icsTexte = (s) => String(s || '').slice(0, 300).replace(/[\\;,]/g, (c) => `\\${c}`).replace(/[\r\n]+/g, ' ');
+
+/** Une seance en fichier agenda, heure de Paris, rappel une heure avant. */
+function agendaIcs({ titre, salle, adresse, debut, duree }) {
+  const heure = (d) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}00`;
+  const d1 = new Date(`${debut}:00`);
+  const d2 = new Date(d1.getTime() + Math.max(30, Math.min(600, Number(duree) || 120)) * 60000);
+  return [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Cine IDF//FR', 'CALSCALE:GREGORIAN',
+    'BEGIN:VTIMEZONE', 'TZID:Europe/Paris',
+    'BEGIN:DAYLIGHT', 'TZOFFSETFROM:+0100', 'TZOFFSETTO:+0200', 'TZNAME:CEST', 'DTSTART:19700329T020000', 'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU', 'END:DAYLIGHT',
+    'BEGIN:STANDARD', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100', 'TZNAME:CET', 'DTSTART:19701025T030000', 'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD',
+    'END:VTIMEZONE',
+    'BEGIN:VEVENT',
+    `UID:${heure(d1)}-${Buffer.from(`${titre}|${salle}`).toString('hex').slice(0, 40)}@cine-idf`,
+    `DTSTAMP:${new Date().toISOString().replace(/[-:]|\.\d+/g, '')}`,
+    `DTSTART;TZID=Europe/Paris:${heure(d1)}`,
+    `DTEND;TZID=Europe/Paris:${heure(d2)}`,
+    `SUMMARY:${icsTexte(titre)}`,
+    `LOCATION:${icsTexte([salle, adresse].filter(Boolean).join(', '))}`,
+    'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsTexte(titre)}`, 'TRIGGER:-PT1H', 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR', '',
+  ].join('\r\n');
+}
+
+function send(req, res, status, body, type = 'application/json; charset=utf-8', etag = null) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
-  const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache' };
+  const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache', ...(etag ? { ETag: etag } : {}) };
   if (buf.length > 1024 && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
     const gz = zlib.gzipSync(buf);
     res.writeHead(status, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': gz.length });
@@ -77,8 +153,16 @@ function send(req, res, status, body, type = 'application/json; charset=utf-8') 
 
 async function sendFile(req, res, file) {
   try {
+    // Fichier inchange depuis la derniere fois : rien a retransferer (forfait
+    // mobile, connexion lente). Le navigateur reprend sa copie.
+    const st = await fsp.stat(file);
+    const etag = `"${st.size}-${Math.round(st.mtimeMs)}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' });
+      return res.end();
+    }
     const buf = await fsp.readFile(file);
-    send(req, res, 200, buf, MIME[path.extname(file)] || 'application/octet-stream');
+    send(req, res, 200, buf, MIME[path.extname(file)] || 'application/octet-stream', etag);
   } catch {
     send(req, res, 404, JSON.stringify({ error: 'not found' }));
   }
@@ -111,7 +195,7 @@ function buildIndex() {
     try {
       const d = readJsonSync(path.join(DATA, f));
       if (!d.counts?.shows) continue; // pas encore de seances : on l'ignore
-      days.push({ date, complete: Boolean(d.complete), ...d.counts });
+      days.push({ date, complete: Boolean(d.complete), fetchedAt: d.fetchedAt, ...d.counts });
       for (const id of d.scanned || []) scanned.add(id);
       for (const sh of d.shows) withShows.add(sh.t);
       if (!generatedAt || d.fetchedAt > generatedAt) generatedAt = d.fetchedAt;
@@ -232,11 +316,25 @@ const ORIGINES_LETTERBOXD = new Set(['https://letterboxd.com', 'https://www.lett
 function origineAcceptee(req) {
   const origin = req.headers.origin;
   if (!origin) return true; // navigation normale : pas d'en-tete Origin
+  // L'adresse HTTPS Tailscale de CE PC (et elle seule : pas n'importe quel *.ts.net).
+  if (adresseTailscale && origin === adresseTailscale) return true;
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
   try {
     return new URL(origin).host === req.headers.host;
   } catch {
     return false;
+  }
+}
+
+// Adresse https://<pc>.<reseau>.ts.net, connue des que Tailscale est relie.
+let adresseTailscale = null;
+async function majTailscale() {
+  try {
+    const t = await etatTailscale(PORT);
+    if (t.adresse) adresseTailscale = t.adresse;
+    return t;
+  } catch {
+    return { etape: 'installer' };
   }
 }
 
@@ -252,7 +350,30 @@ const IDLE_MIN = Number(process.env.IDLE_MIN || 30);
 let lastRequestAt = Date.now();
 const liveClients = new Set();
 
-const server = http.createServer(async (req, res) => {
+/**
+ * Dernière synchro de chaque appareil, et avec quelle version de l'app : c'est
+ * ce qui permet de voir d'ici qu'un iPhone tourne encore sur une vieille copie.
+ * En mémoire seulement (rien de perso, et ça se reconstitue en quelques secondes).
+ */
+const appareils = new Map();
+function noterAppareil(req, version) {
+  const ua = String(req.headers['user-agent'] || '');
+  const nom = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+    : /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'PC' : 'Autre';
+  const via = /\.ts\.net$/.test(String(req.headers.host || '')) ? 'tailscale' : 'local';
+  appareils.set(`${nom}|${via}`, { nom, via, version, at: Date.now() });
+}
+
+const server = http.createServer((req, res) => {
+  // Une requete qui se passe mal ne doit jamais faire tomber le serveur.
+  traiter(req, res).catch((err) => {
+    journal(err);
+    if (res.headersSent) return res.end();
+    send(req, res, 500, JSON.stringify({ error: 'erreur interne' }));
+  });
+});
+
+async function traiter(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const route = url.pathname;
 
@@ -264,6 +385,16 @@ const server = http.createServer(async (req, res) => {
 
   lastRequestAt = Date.now();
   if (route === '/api/ping') return send(req, res, 200, JSON.stringify({ ok: true }));
+  if (route === '/api/version') return send(req, res, 200, JSON.stringify({ version: versionApp() }));
+
+  // Une seance a ajouter a l'agenda du telephone ou du PC.
+  if (route === '/api/agenda.ics') {
+    const q = Object.fromEntries(url.searchParams);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(q.debut || '') || Number.isNaN(Date.parse(q.debut))) {
+      return send(req, res, 400, JSON.stringify({ error: 'date invalide' }));
+    }
+    return send(req, res, 200, agendaIcs(q), 'text/calendar; charset=utf-8');
+  }
 
   // Connexion temoin : ouverte tant que l'app l'est.
   if (route === '/api/alive') {
@@ -429,6 +560,26 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Acces depuis le telephone : etat de Tailscale et reglage « toujours allume ».
+  if (route === '/api/mobile' && req.method === 'GET') {
+    const t = await majTailscale();
+    return send(req, res, 200, JSON.stringify({ ...reglages(), demarrage: demarrageInstalle(), tailscale: t, appareils: [...appareils.values()] }));
+  }
+  if (route === '/api/mobile' && req.method === 'POST') {
+    let body = '';
+    for await (const chunk of req) { body += chunk; if (body.length > 2000) break; }
+    let demande = {};
+    try { demande = JSON.parse(body); } catch { /* corps illisible */ }
+    try {
+      if (typeof demande.toujoursActif === 'boolean') await definirToujoursActif(demande.toujoursActif);
+      if (demande.publier) await publierTailscale(PORT);
+      const t = await majTailscale();
+      return send(req, res, 200, JSON.stringify({ ...reglages(), demarrage: demarrageInstalle(), tailscale: t }));
+    } catch (err) {
+      return send(req, res, 400, JSON.stringify({ error: err.message }));
+    }
+  }
+
   // Synchro automatique de la watchlist Letterboxd : etat, pseudo, relance.
   if (route === '/api/watchlist/status') {
     return send(req, res, 200, JSON.stringify({ ...etatSync(), running: watchlistRunning }));
@@ -499,6 +650,71 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Listes perso partagees entre le PC et le telephone (seances gardees,
+  // favoris, « a voir ») : chaque appareil envoie sa liste et celle de sa
+  // derniere synchro (`base`), et ses changements sont rejoues sur la liste
+  // commune. Les anciennes versions de l'app (`at` / `fusion`) restent comprises.
+  if (route === '/api/perso' && req.method === 'POST') {
+    let body = '';
+    for await (const chunk of req) {
+      body += chunk;
+      if (body.length > 500000) return send(req, res, 413, JSON.stringify({ error: 'trop long' }));
+    }
+    let recu;
+    try { recu = JSON.parse(body); } catch { return send(req, res, 400, JSON.stringify({ error: 'format' })); }
+    noterAppareil(req, Object.values(recu || {}).some((r) => Array.isArray(r?.base)) ? 'a jour' : 'ancienne version');
+    const f = path.join(DATA, 'perso.json');
+    let stock = {};
+    try {
+      if (fs.existsSync(f)) stock = readJsonSync(f);
+    } catch (err) {
+      // Fichier illisible : surtout ne pas l'ecraser par une liste vide.
+      journal(err);
+      return send(req, res, 500, JSON.stringify({ error: 'listes illisibles' }));
+    }
+    const cles = {
+      cart: (x) => `${x?.d}|${x?.t}|${x?.m}|${x?.s}|${x?.v}`,
+      favs: (x) => String(x),
+      wlLocal: (x) => String(x),
+      wlPerso: (x) => `${String(x?.title || '').toLowerCase()}|${x?.year || ''}`,
+    };
+    let modifie = false;
+    for (const [cle, cleDe] of Object.entries(cles)) {
+      const r = recu?.[cle];
+      if (!r || !Array.isArray(r.v)) continue;
+      const valeur = r.v.slice(0, 1000);
+      const actuel = stock[cle];
+      if (Array.isArray(r.base)) {
+        const commun = actuel?.v || [];
+        const fusion = fusionTrois(commun, valeur, r.base.slice(0, 1000), cleDe);
+        const pareil = fusion.length === commun.length && fusion.every((x, i) => cleDe(x) === cleDe(commun[i]));
+        if (!pareil || !actuel) {
+          stock[cle] = { v: fusion, at: Date.now() };
+          modifie = true;
+        }
+      } else if (r.fusion) {
+        const vus = new Set();
+        const union = [...(actuel?.v || []), ...valeur].filter((x) => (vus.has(cleDe(x)) ? false : vus.add(cleDe(x))));
+        // Rien de neuf : la date ne bouge pas, sinon un appareil qui arrive ferait
+        // perdre aux autres leurs changements encore en attente.
+        if (!actuel || union.length !== actuel.v.length) {
+          stock[cle] = { v: union, at: Date.now() };
+          modifie = true;
+        }
+      } else if (!actuel || Number(r.at) > actuel.at) {
+        stock[cle] = { v: valeur, at: Number(r.at) || Date.now() };
+        modifie = true;
+      }
+    }
+    if (modifie) {
+      fs.mkdirSync(DATA, { recursive: true });
+      ecrireAtomique(f, JSON.stringify(stock));
+      // Le scraper commence par les salles favorites : on tient sa liste a jour.
+      if (stock.favs) ecrireAtomique(path.join(DATA, 'favorites.json'), JSON.stringify(stock.favs.v.filter((x) => typeof x === 'string').slice(0, 200)));
+    }
+    return send(req, res, 200, JSON.stringify(stock));
+  }
+
   // L'app publie ses favoris pour que la recuperation commence par eux : tes
   // salles sont a jour en quelques secondes au lieu de quelques minutes.
   if (route === '/api/favorites' && req.method === 'POST') {
@@ -563,7 +779,11 @@ const server = http.createServer(async (req, res) => {
   const file = path.join(PUBLIC, route === '/' ? 'index.html' : route.replace(/^\//, ''));
   if (!file.startsWith(PUBLIC)) return send(req, res, 403, JSON.stringify({ error: 'forbidden' }));
   return sendFile(req, res, file);
-});
+}
+
+// Erreur hors requete : on la note. Le lanceur relance le serveur s'il s'arrete.
+process.on('unhandledRejection', journal);
+process.on('uncaughtException', (err) => { journal(err); process.exit(1); });
 
 /**
  * Watchlist Letterboxd : relue a l'ouverture, puis toutes les 30 min tant que
@@ -633,6 +853,9 @@ server.listen(PORT, HOST, () => {
   // est ouverte, des qu'un jour depasse sa duree de fraicheur (freshness.js).
   autoRefresh('demarrage');
   autoWatchlist();
+  majTailscale();
+  // Lanceur tenu a jour : version de Node, relance automatique.
+  if (reglages().toujoursActif) ecrireLanceur();
 
   setInterval(() => {
     // Ecriture periodique : fait remonter les connexions mortes (fenetre fermee
@@ -647,8 +870,11 @@ server.listen(PORT, HOST, () => {
 
     // Ni pendant une recuperation (meme lancee en ligne de commande), ni tant
     // qu'une fenetre de l'app est ouverte.
-    if (liveClients.size > 0) { autoRefresh('app ouverte'); autoWatchlist(); }
-    if (refresh.running || externalRefreshRunning() || liveClients.size > 0) {
+    // « Toujours allume » (pour le telephone) : on se tient a jour meme sans
+    // fenetre ouverte, et on ne s'arrete jamais.
+    const toujours = reglages().toujoursActif;
+    if (liveClients.size > 0 || toujours) { autoRefresh(liveClients.size ? 'app ouverte' : 'toujours allume'); autoWatchlist(); }
+    if (toujours || refresh.running || externalRefreshRunning() || liveClients.size > 0) {
       lastRequestAt = Date.now();
       return;
     }

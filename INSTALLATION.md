@@ -5,7 +5,7 @@ payer, rien n'est envoyé nulle part.
 
 ## Sur Windows : un double-clic
 
-1. **Décompresse** `cine-idf.zip` où tu veux (Bureau, Documents…).
+1. **Décompresse** `cine-idf-windows.zip` où tu veux (Bureau, Documents…).
 2. Dans le dossier `cine-idf`, **double-clique sur `Installer Cine IDF.cmd`**.
    - S'il manque Node.js (le moteur de l'app), il te propose de l'installer : réponds **O**.
      Windows peut demander une autorisation, c'est normal.
@@ -32,7 +32,7 @@ séances de la semaine. Tu peux t'en servir pendant ce temps, elle se remplit au
 
 ## Sur Mac : un double-clic aussi
 
-1. **Décompresse** `cine-idf.zip` (double-clic dessus) et range le dossier `cine-idf`
+1. **Décompresse** `cine-idf-mac.zip` (double-clic dessus) et range le dossier `cine-idf`
    où tu veux, par exemple dans Documents.
 2. Dans le dossier, **ouvre `Installer Cine IDF.command`**.
    - Au premier essai, macOS bloque le fichier (« développeur non identifié ») :

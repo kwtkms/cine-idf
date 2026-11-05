@@ -22,7 +22,13 @@ if (-not (Test-Port)) {
         [Windows.MessageBox]::Show("Node.js est introuvable. Installe-le depuis nodejs.org puis relance Ciné IDF.", 'Ciné IDF') | Out-Null
         exit 1
     }
-    Start-Process -FilePath $node -ArgumentList 'src\server.js' -WorkingDirectory $root -WindowStyle Hidden
+    # « Garder Ciné IDF allumé » coché : ce lanceur relance le serveur s'il plante.
+    $superviseur = Join-Path $root 'serveur-cache.vbs'
+    if (Test-Path -LiteralPath $superviseur) {
+        Start-Process -FilePath 'wscript.exe' -ArgumentList "`"$superviseur`"" -WorkingDirectory $root
+    } else {
+        Start-Process -FilePath $node -ArgumentList 'src\server.js' -WorkingDirectory $root -WindowStyle Hidden
+    }
 
     for ($i = 0; $i -lt 60; $i++) {
         if (Test-Port) { break }

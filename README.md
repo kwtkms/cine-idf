@@ -101,9 +101,17 @@ Raccourcis : **/** place le curseur dans la recherche, **Échap** la vide ou fer
   cherche sur les autres jours et propose d'y aller.
 - Filtres : département, ville, cinéma, VF/VOST, créneau horaire, genre,
   avant-premières, séances passées.
+- **Par heure** : une vue qui liste toutes les séances du jour de la prochaine à la
+  dernière. Dans la fiche d'un film ou d'un cinéma, les séances sont aussi rangées par
+  heure (Matin, Après-midi, Soirée), avec un bouton pour repasser en « par cinéma ».
 - **Panier de séances** : un clic sur un horaire le met de côté (la pastille passe
-  au vert). Le bouton 🎟 en bas à droite ouvre la liste, groupée par jour et triée
-  par heure, avec le lien de réservation. Rien ne se perd en scrollant.
+  au vert, un message permet d'annuler). « Mes séances » ouvre la liste, groupée par
+  jour et triée par heure, avec Réserver, Y aller, Agenda (fichier `.ics`, rappel 1 h
+  avant) et Partager ; les séances passées sont rangées à part. Chaque séance indique
+  l'heure de fin (durée du film, sans les pubs), le temps et la distance jusqu'à la
+  suivante ou le chevauchement, et une alerte si elle a disparu d'AlloCiné.
+- **★ 3,5 et plus** : ne garde que les films notés au moins 3,5 sur Letterboxd (un film
+  sans note est masqué par ce filtre).
 - ★ Mets tes cinémas en favoris, puis coche « Uniquement mes cinémas ».
 - **Watchlist Letterboxd** : importe ton `watchlist.csv` et les films qui y figurent
   sont marqués d'un badge vert, avec un filtre « Uniquement ma watchlist ».
@@ -115,30 +123,71 @@ Raccourcis : **/** place le curseur dans la recherche, **Échap** la vide ou fer
 
 Filtres et favoris sont mémorisés dans le navigateur.
 
-## Sur téléphone
+## Sur téléphone (iPhone) : une vraie appli, partout
 
-L'interface est déjà pensée pour le tactile (filtres repliables, cibles de 42 à 48 px,
-pas de défilement horizontal). Il suffit d'ouvrir le serveur au réseau local :
+L'iPhone joint le PC par **Tailscale** (gratuit), un réseau privé entre TES appareils.
+`tailscale serve` publie l'app sur une adresse HTTPS de ce réseau
+(`https://<pc>.<réseau>.ts.net`), visible par toi seul. Le HTTPS permet à l'iPhone
+d'installer l'app sur l'écran d'accueil (plein écran, icône, encoche gérée) et
+surtout d'en **garder une copie hors ligne**.
 
-```bash
-npm run mobile
-```
+**L'écran** (largeur ≤ 900 px, toujours en thème sombre) : recherche et jours fixés en
+haut, barre du bas Films / Cinémas / Horaires / Mes séances / Filtres, trois affiches par
+ligne, raccourcis (Soirée, VO, Près de moi…) sur une ligne qui défile, liste qui se
+complète au défilement. Le geste « retour » de l'iPhone ferme l'écran ouvert au lieu de
+quitter l'app. Au retour dans l'app, elle passe à la journée en cours (ou à la suivante
+s'il ne reste plus de séance) et retire les séances passées. Dates et heures sont
+toujours celles de Paris, même depuis l'étranger. Si les fichiers de l'app ont changé,
+elle se recharge toute seule au retour ou dans la minute, sauf si une fiche, un panneau
+ou la recherche est en cours. Réseau lent : le service worker sert d'abord l'ancienne copie,
+puis prévient la page dès que la nouvelle version est arrivée (testé : rechargement au bout
+de 18 s avec un serveur retardé de 6 s). Testé en émulation iPhone (320, 390 et 430 px de large),
+pas sur un vrai iPhone pour le partage (`navigator.share`), Plans, la géolocalisation
+et l'ajout à l'agenda.
 
-Il affiche alors l'adresse à saisir sur le téléphone, du genre `http://192.168.1.20:4173` (la tienne sera différente).
-Ensuite, **Ajouter à l'écran d'accueil** depuis le navigateur : tu obtiens une icône
-Ciné IDF sur ton téléphone, qui ouvre l'app en plein écran.
+**Hors ligne** (`public/sw.js`, service worker) : l'app, les 5 journées de séances,
+la watchlist et les affiches sont gardées sur l'iPhone. Dans le métro ou PC éteint,
+l'app s'ouvre quand même, avec un bandeau « Hors ligne — séances récupérées le … ».
+Testé le 24/10/2026 serveur arrêté : 5 jours, 40 films, changement de jour et bande
+watchlist disponibles. Quand le PC redevient joignable, tout se remet à jour seul.
 
-Le transfert est léger : **387 Ko compressés** pour les 5 journées et les 362 cinémas.
+**Mise en place** — l'app guide pas à pas dans le panneau de gauche, bloc
+« Sur mon iPhone » (visible sur le PC) :
 
-Le garde-fou reste actif — le serveur n'accepte que les requêtes venant de sa propre
-adresse, un site web tiers ouvert sur le téléphone ne peut pas l'appeler.
+1. Installer Tailscale sur le PC (<https://tailscale.com/download/windows>) et se
+   connecter (un compte Google suffit).
+2. Installer Tailscale sur l'iPhone (App Store), même compte, et laisser le VPN activé.
+3. Dans la console Tailscale, **DNS › HTTPS Certificates › Enable** (une fois).
+4. Dans l'app sur le PC : **J'ai fini, vérifier** puis **Activer l'accès iPhone**
+   (lance `tailscale serve --bg 4173`), et cocher **Garder Ciné IDF allumé**.
+5. Sur l'iPhone, Safari › l'adresse affichée › Partager › **Sur l'écran d'accueil**.
 
-**Ce que ça ne fait pas** : ça marche uniquement **chez toi, PC allumé, même réseau**.
-Pas de consultation dans le métro. Pour un vrai fonctionnement hors ligne il faudrait
-un *service worker*, or les navigateurs les refusent hors HTTPS — et une adresse
-`192.168.x.x` en HTTP n'est pas un contexte sécurisé. Héberger l'app en ligne
-résoudrait ça, mais reviendrait à redistribuer les données d'AlloCiné, ce que leurs
-conditions n'autorisent pas.
+**Garder Ciné IDF allumé** (`src/mobile.js`, `data/settings.json`) : le serveur ne
+s'arrête plus quand la fenêtre est fermée, continue ses mises à jour (séances, watchlist)
+et démarre avec Windows, via un raccourci dans le dossier Démarrage vers
+`serveur-cache.vbs` (lancement sans fenêtre). Décocher retire les deux.
+Si le PC est en veille, l'iPhone affiche la dernière copie.
+
+**Synchro PC ↔ iPhone** (`/api/perso`, `data/perso.json`) : les séances gardées (« Mes séances »),
+les favoris ★ et la liste « à voir » (bouton + et films saisis) sont partagés entre les appareils.
+Chaque appareil retient la liste de sa dernière synchro (`cineidf.persoBase`) et n'envoie que
+ses vrais ajouts et retraits : deux appareils qui changent la même liste, hors ligne ou non, ne
+s'écrasent plus, et les horloges ne jouent aucun rôle. Un appareil neuf et vide n'efface rien.
+Hors ligne, les changements attendent et partent au retour ; chaque appareil revérifie toutes
+les 15 s tant que l'app est à l'écran, à chaque retour et à l'ouverture de « Mes séances ».
+Une synchro bloquée (requête gelée par la mise en veille de l'iPhone) est abandonnée au bout
+de 12 s au lieu de bloquer toutes les suivantes. « Mes séances » affiche l'état : « Synchronisé
+avec le PC à 14h05 », ou en rouge « Pas synchronisé : PC injoignable » avec Réessayer. Côté PC,
+le bloc « Sur mon iPhone » indique la dernière synchro de l'iPhone et s'il tourne sur une
+ancienne version de l'app. Testé le 01/11/2026 avec deux
+navigateurs séparés coupés du serveur : les deux ajouts et le retrait sont conservés des deux côtés.
+
+Sécurité : le serveur n'écoute toujours que sur la machine (127.0.0.1) ; Tailscale
+relaie localement. Seule l'adresse `.ts.net` de CE PC est acceptée en plus de
+localhost, pas n'importe quel `*.ts.net`.
+
+L'ancien mode réseau local (`HOST=0.0.0.0`, même wifi, sans hors ligne) existe
+toujours mais n'a plus d'intérêt.
 
 ## Carte UGC Illimité
 
